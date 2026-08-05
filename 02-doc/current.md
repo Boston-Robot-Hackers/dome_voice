@@ -14,7 +14,7 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - `audio_feedback.py` — `beep()` via aplay
 - `speech_output_node.py` — ROS2 node: subscribes `/announcement`, speaks via Piper TTS + ALSA
 - `__init__.py` — public API surface
-- `test/` — 42 passing tests (all green)
+- `test/` — 37/42 passing; see Known Issues
 - `01-literate/` — literate docs: 00-overview, 01-runtime, 02-intent_mapper, 03-voice_input_node, 04-speech_output_node, X01-audio_feedback
 
 ## Recent Changes (2026-05-14)
@@ -26,7 +26,15 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 
 ## Known Issues
 
-None. All 42 tests pass.
+**5 of 42 tests failing (found 2026-08-05, not caused by any change this
+session — pre-existing, previously undetected)**: see
+`05-issues/open/I01-test-suite-regressions.md`.
+- `voice_input_node`'s beep path reads `self.voice_config`, unset on the
+  node under test (3 failures).
+- `voice_runtime`'s fake-model test gets `"alexa stop"` instead of `"stop"`
+  — wake word not stripped before the intent-mapper step.
+- `voice_runtime_config`'s `CONTROL_VOICE_TUNE_CONFIG` env var override
+  isn't taking effect in `load_voice_runtime_config`.
 
 ## Quick Commands
 
