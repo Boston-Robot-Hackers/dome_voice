@@ -10,6 +10,7 @@ import tempfile
 import wave
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 from dome_control.announcement_contract import Announcement, AnnouncementMsg
@@ -180,10 +181,11 @@ def main():
     node = SpeechOutputNode()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass  # Ctrl-C or the launcher's SIGTERM: a normal stop
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":
