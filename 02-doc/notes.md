@@ -13,9 +13,18 @@ device index conflicts on Raspberry Pi. Stereo→mono average in `read_mono_chun
 ## Grammar constraint
 
 Vosk grammar must include every phrase in `PHRASE_INTENTS` plus `[unk]`. Adding a new voice
-command requires updating both `intent_mapper.py` and `TUNED_VOICE_PARAMETERS["stream_settings"]["grammar"]`.
+command requires updating `intent_mapper.py`, `DEFAULT_GRAMMAR` in `runtime.py`, and the grammar in
+`config/voice.yaml`.
 
 ## Tuned parameters
 
-`TUNED_VOICE_PARAMETERS` in `runtime.py` is the paste target for `~/tune` experiment results.
-Shape mirrors tune's `active.yaml` so values can be copied mechanically.
+**Tune results go into `config/voice.yaml`, not into code** (F02, 2026-11-19). The file's
+shape mirrors tune's `active.yaml`, so values can be copied mechanically.
+
+The defaults live once, in `runtime.py`'s `VoiceConfigFile` (a strict pydantic model). A YAML
+overrides only the keys it names, and an unknown key raises. This is the pattern dome_vision,
+dome_semantic and dome_control's `spin_survey` use.
+
+The old in-code table had `threshold` 0.7 and `wake_hits` 3, tuned for `alexa`. The robot never
+ran with them, because its YAML replaced the table. They are the starting point for re-tuning
+`hey_marvin`.

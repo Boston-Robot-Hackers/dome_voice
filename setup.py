@@ -1,27 +1,28 @@
 from setuptools import find_packages, setup
 
-package_name = 'dome_voice'
+package_name = "dome_voice"
 
 setup(
     name=package_name,
-    version='0.0.0',
-    packages=find_packages(exclude=['test']),
+    version="0.0.0",
+    packages=find_packages(exclude=["test"]),
     data_files=[
-        ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/robot.launch.py', 'launch/remote.launch.py']),
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+        ("share/" + package_name + "/launch", ["launch/robot.launch.py"]),
+        ("share/" + package_name + "/config", ["config/voice.yaml"]),
     ],
-    install_requires=['setuptools'],
+    install_requires=["setuptools"],
     zip_safe=True,
-    maintainer='pitosalas',
-    maintainer_email='pitosalas@gmail.com',
-    description='ROS-free voice pipeline: wake word, STT, intent mapping, audio feedback.',
-    license='MIT',
+    maintainer="pitosalas",
+    maintainer_email="pitosalas@gmail.com",
+    description="ROS-free voice pipeline: wake word, STT, intent mapping, audio feedback.",
+    license="MIT",
     entry_points={
-        'console_scripts': [
-            'voice_smoke_test = dome_voice.runtime:main',
-            'voice_input = dome_voice.voice_input_node:main',
-            'speech_output = dome_voice.speech_output_node:main',
+        "console_scripts": [
+            "voice_smoke_test = dome_voice.runtime:main",
+            "voice_input = dome_voice.voice_input_node:main",
+            "speech_output = dome_voice.speech_output_node:main",
         ],
     },
 )

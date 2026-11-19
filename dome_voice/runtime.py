@@ -13,11 +13,14 @@ import math
 import os
 import subprocess
 import time
-from dataclasses import asdict, dataclass, replace
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 RATE = 16000
 CHUNK = 1280
@@ -35,75 +38,139 @@ DEFAULT_GRAMMAR = (
     "help",
 )
 
-# Paste the latest winning values from ~/tune here.
-#
-# This is the production voice configuration source of truth. Keep the shape
-# close to tune's active.yaml so copying values from an experiment is mechanical:
-# top-level capture/playback cards, stream_settings, and sox_chain.
-TUNED_VOICE_PARAMETERS = {
-    "capture_card": 0,
-    "playback_card": 0,
-    "stream_settings": {
-        "wake_word": "alexa",          # openWakeWord model name to load
-        "threshold": 0.7,              # min score per chunk to count as wake hit (0.0–1.0); raise if false triggers
-        "wake_hits": 3,                # consecutive chunks above threshold required; raise to resist noise spikes
-        "wake_cooldown_secs": 1.5,     # seconds to drain mic buffer after a turn before re-entering wake detection
-        "live_filter": True,           # apply highpass/lowpass bandpass filter to mic input
-        "vosk_model": "small",         # "small" or "large" — see VOSK_MODEL_PATHS
-        "grammar": list(DEFAULT_GRAMMAR),  # constrained Vosk vocabulary; must include every phrase in intent_mapper
-                                           # DEFAULT_GRAMMAR is source of truth — this line keeps them in sync
-        "silence_dbfs": None,          # override silence floor (dBFS); None = auto from noise window
-        "silence_margin": 5.0,         # dB above noise floor to classify as silence
-        "silence_secs": 1.0,           # seconds of silence to end a command
-        "min_command_secs": 0.4,       # minimum command duration before silence can end it
-        "command_start_secs": 2.5,     # max seconds to wait for speech to start after wake
-        "max_command_secs": 8.0,       # hard cap on total command capture time
-    },
-    "sox_chain": {
-        "highpass": 120,
-        "lowpass": 4000,
-    },
-}
-
-TUNE_CONFIG_ENV_VARS = ("DOME_VOICE_CONFIG", "CONTROL_VOICE_TUNE_CONFIG", "VOICE_TUNE_CONFIG")
-
 VOSK_MODEL_PATHS = {
     "small": "~/models/vosk-model-small-en-us-0.15",
     "large": "~/models/vosk-model-en-us-0.22",
 }
 
 
-@dataclass(frozen=True)
-class VoiceRuntimeConfig:
-    """Tuned voice parameters shared by the ROS node and non-ROS runtime."""
+class StrictModel(BaseModel):
+    """Rejects unknown keys, so a misspelled YAML key fails loudly."""
 
-    source_path: str = ""
-    capture_card: int = 0
-    playback_card: int = 0
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def none_if_blank(value: Any) -> Any:
+    """YAML spellings of "no value" for optional floats: none, None, or empty."""
+    return None if value in ("", "none", "None") else value
+
+
+class StreamSettings(StrictModel):
     wake_word: str = "alexa"
-    threshold: float = 0.3
-    wake_hits: int = 1
-    wake_cooldown_secs: float = 1.5
+    threshold: float = Field(0.3, ge=0.0, le=1.0)
+    wake_hits: int = Field(1, ge=1)
+    wake_cooldown_secs: float = Field(1.5, ge=0.0)
     live_filter: bool = True
-    highpass: float | None = 120.0
-    lowpass: float | None = 4000.0
     vosk_model: str = "small"
     grammar: tuple[str, ...] = DEFAULT_GRAMMAR
     silence_dbfs: float | None = None
     silence_margin: float = 5.0
-    silence_secs: float = 1.0
-    min_command_secs: float = 0.4
-    command_start_secs: float = 2.5
-    max_command_secs: float = 8.0
-    beep_wake_freq: int = 880
-    beep_wake_duration: float = 0.3
-    beep_wake_volume: float = 1.0
-    beep_intent_freq: int = 330
-    beep_intent_duration: float = 0.02
-    beep_intent_volume: float = 1.0
-    beep_fail_freq: int = 220
-    beep_fail_duration: float = 0.6
-    beep_fail_volume: float = 1.0
+    silence_secs: float = Field(1.0, gt=0.0)
+    min_command_secs: float = Field(0.4, ge=0.0)
+    command_start_secs: float = Field(2.5, gt=0.0)
+    max_command_secs: float = Field(8.0, gt=0.0)
+
+    @field_validator("grammar", mode="before")
+    @classmethod
+    def parse_grammar(cls, value: Any) -> tuple[str, ...]:
+        """A list, or one comma-separated string; an empty grammar is an error."""
+        items = value.split(",") if isinstance(value, str) else value
+        grammar = tuple(str(item).strip() for item in items if str(item).strip())
+        if not grammar:
+            raise ValueError("grammar is empty")
+        return grammar
+
+    @field_validator("silence_dbfs", mode="before")
+    @classmethod
+    def blank_silence_dbfs(cls, value: Any) -> Any:
+        return none_if_blank(value)
+
+
+class SoxChain(StrictModel):
+    """Bandpass cutoffs in Hz; none (or <= 0) turns that side off."""
+
+    highpass: float | None = 120.0
+    lowpass: float | None = 4000.0
+
+    @field_validator("highpass", "lowpass", mode="before")
+    @classmethod
+    def blank_cutoff(cls, value: Any) -> Any:
+        return none_if_blank(value)
+
+
+class BeepSettings(StrictModel):
+    wake_freq: int = 880
+    wake_duration: float = 0.3
+    wake_volume: float = Field(1.0, ge=0.0, le=1.0)
+    intent_freq: int = 330
+    intent_duration: float = 0.02
+    intent_volume: float = Field(1.0, ge=0.0, le=1.0)
+    fail_freq: int = 220
+    fail_duration: float = 0.6
+    fail_volume: float = Field(1.0, ge=0.0, le=1.0)
+
+
+class VoiceConfigFile(StrictModel):
+    """The voice YAML's shape, and the only place voice defaults are written.
+
+    A YAML file overrides just the keys it names; everything else keeps the
+    default here. The shape mirrors `~/tune`'s active.yaml, so tune results
+    can be pasted into `config/voice.yaml` directly.
+    """
+
+    capture_card: int = 0
+    playback_card: int = 0
+    stream_settings: StreamSettings = Field(default_factory=StreamSettings)
+    sox_chain: SoxChain = Field(default_factory=SoxChain)
+    beep: BeepSettings = Field(default_factory=BeepSettings)
+
+    def to_runtime_config(self, source_path: str) -> "VoiceRuntimeConfig":
+        beeps = {f"beep_{k}": v for k, v in self.beep.model_dump().items()}
+        return VoiceRuntimeConfig(
+            source_path=source_path,
+            capture_card=self.capture_card,
+            playback_card=self.playback_card,
+            **self.stream_settings.model_dump(),
+            **self.sox_chain.model_dump(),
+            **beeps,
+        )
+
+
+@dataclass(frozen=True)
+class VoiceRuntimeConfig:
+    """The flat, resolved config the runtime and node read.
+
+    Built only by `VoiceConfigFile.to_runtime_config`, so it has no defaults
+    of its own. Tests derive variants with `dataclasses.replace`.
+    """
+
+    source_path: str
+    capture_card: int
+    playback_card: int
+    wake_word: str
+    threshold: float
+    wake_hits: int
+    wake_cooldown_secs: float
+    live_filter: bool
+    highpass: float | None
+    lowpass: float | None
+    vosk_model: str
+    grammar: tuple[str, ...]
+    silence_dbfs: float | None
+    silence_margin: float
+    silence_secs: float
+    min_command_secs: float
+    command_start_secs: float
+    max_command_secs: float
+    beep_wake_freq: int
+    beep_wake_duration: float
+    beep_wake_volume: float
+    beep_intent_freq: int
+    beep_intent_duration: float
+    beep_intent_volume: float
+    beep_fail_freq: int
+    beep_fail_duration: float
+    beep_fail_volume: float
 
     @property
     def vosk_model_path(self) -> str:
@@ -272,137 +339,47 @@ def load_voice_runtime_config(
     path: str | os.PathLike[str] | None = None,
     overrides: dict[str, Any] | None = None,
 ) -> VoiceRuntimeConfig:
-    """Load tuned voice settings.
+    """Load the voice config: the defaults, then a YAML, then overrides.
 
-    By default this uses ``TUNED_VOICE_PARAMETERS`` above, which is the simple
-    cut-and-paste handoff point from ``~/tune`` experiments. For comparison
-    tests, set ``CONTROL_VOICE_TUNE_CONFIG`` or ``VOICE_TUNE_CONFIG`` to point at
-    a tune YAML file, or pass ``path`` directly.
+    The YAML is `path`; with none, the defaults in `VoiceConfigFile` are used
+    as they are. No environment variable chooses the file (see dome2's
+    stack/config_conventions.md). A named file that does not exist raises:
+    silently running on the defaults would hide a wrong path. `overrides` uses the flat names (`threshold`,
+    `beep_wake_freq`, ...); a `None` value means "not given".
     """
-
-    config_path = _resolve_config_path(path)
-    if config_path is not None and config_path.exists():
-        data = _load_yaml(config_path)
-        source_path = str(config_path)
+    config_path = Path(path).expanduser() if path else None
+    if config_path is None:
+        file_data: dict[str, Any] = {}
+        source_path = "defaults"
     else:
-        data = TUNED_VOICE_PARAMETERS
-        source_path = "dome_voice.runtime:TUNED_VOICE_PARAMETERS"
-    config = config_from_tune_mapping(data, source_path=source_path)
-    if overrides:
-        config = apply_config_overrides(config, overrides)
-    return config
+        file_data = read_yaml(config_path)
+        source_path = str(config_path)
+    for key, value in (overrides or {}).items():
+        if value is not None:
+            set_flat_key(file_data, key, value)
+    return VoiceConfigFile.model_validate(file_data).to_runtime_config(source_path)
 
 
-def config_from_tune_mapping(
-    data: dict[str, Any],
-    source_path: str = "",
-) -> VoiceRuntimeConfig:
-    stream = _as_dict(data.get("stream_settings"))
-    sox_chain = _as_dict(data.get("sox_chain"))
-
-    return VoiceRuntimeConfig(
-        source_path=source_path,
-        capture_card=_as_int(data.get("capture_card"), 0),
-        playback_card=_as_int(data.get("playback_card"), 0),
-        wake_word=str(stream.get("wake_word", "alexa")),
-        threshold=_as_float(stream.get("threshold"), 0.3),
-        wake_hits=_as_int(stream.get("wake_hits"), 1),
-        wake_cooldown_secs=_as_float(stream.get("wake_cooldown_secs"), 1.5),
-        live_filter=_as_bool(stream.get("live_filter"), True),
-        highpass=_optional_float(stream.get("highpass", sox_chain.get("highpass", 120))),
-        lowpass=_optional_float(stream.get("lowpass", sox_chain.get("lowpass", 4000))),
-        vosk_model=str(stream.get("vosk_model", "small")),
-        grammar=_parse_grammar(stream.get("grammar", DEFAULT_GRAMMAR)),
-        silence_dbfs=_optional_float(stream.get("silence_dbfs")),
-        silence_margin=_as_float(stream.get("silence_margin"), 5.0),
-        silence_secs=_as_float(stream.get("silence_secs"), 1.0),
-        min_command_secs=_as_float(stream.get("min_command_secs"), 0.4),
-        command_start_secs=_as_float(stream.get("command_start_secs"), 2.5),
-        max_command_secs=_as_float(stream.get("max_command_secs"), 8.0),
-        beep_wake_freq=_as_int(_as_dict(data.get("beep")).get("wake_freq"), 880),
-        beep_wake_duration=_as_float(_as_dict(data.get("beep")).get("wake_duration"), 0.3),
-        beep_wake_volume=_as_float(_as_dict(data.get("beep")).get("wake_volume"), 1.0),
-        beep_intent_freq=_as_int(_as_dict(data.get("beep")).get("intent_freq"), 330),
-        beep_intent_duration=_as_float(_as_dict(data.get("beep")).get("intent_duration"), 0.02),
-        beep_intent_volume=_as_float(_as_dict(data.get("beep")).get("intent_volume"), 1.0),
-        beep_fail_freq=_as_int(_as_dict(data.get("beep")).get("fail_freq"), 220),
-        beep_fail_duration=_as_float(_as_dict(data.get("beep")).get("fail_duration"), 0.6),
-        beep_fail_volume=_as_float(_as_dict(data.get("beep")).get("fail_volume"), 1.0),
+def set_flat_key(file_data: dict[str, Any], key: str, value: Any) -> None:
+    """Put a flat override (`threshold`, `beep_fail_freq`) in its YAML section."""
+    if key in VoiceConfigFile.model_fields:
+        file_data[key] = value
+        return
+    sections = (
+        ("stream_settings", StreamSettings, key),
+        ("sox_chain", SoxChain, key),
+        ("beep", BeepSettings, key.removeprefix("beep_")),
     )
+    for section, model, field in sections:
+        if field in model.model_fields and (section != "beep" or key != field):
+            file_data.setdefault(section, {})[field] = value
+            return
+    raise ValueError(f"unknown voice config override: {key!r}")
 
 
-def apply_config_overrides(
-    config: VoiceRuntimeConfig,
-    overrides: dict[str, Any],
-) -> VoiceRuntimeConfig:
-    values: dict[str, Any] = {}
-    for key, value in overrides.items():
-        if value is None or not hasattr(config, key):
-            continue
-        if key == "grammar":
-            value = _parse_grammar(value)
-        values[key] = value
-    return replace(config, **values)
-
-
-def _resolve_config_path(path: str | os.PathLike[str] | None) -> Path | None:
-    if path:
-        return Path(path).expanduser()
-    for name in TUNE_CONFIG_ENV_VARS:
-        value = os.environ.get(name)
-        if value:
-            return Path(value).expanduser()
-    return None
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    try:
-        import yaml
-    except ImportError as exc:
-        raise RuntimeError("PyYAML is required to read tune voice config") from exc
+def read_yaml(path: Path) -> dict[str, Any]:
     with path.open() as fh:
         return yaml.safe_load(fh) or {}
-
-
-def _as_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _as_int(value: Any, default: int) -> int:
-    if value is None:
-        return default
-    return int(value)
-
-
-def _as_float(value: Any, default: float) -> float:
-    if value is None:
-        return default
-    return float(value)
-
-
-def _optional_float(value: Any) -> float | None:
-    if value in (None, "", "none", "None"):
-        return None
-    return float(value)
-
-
-def _as_bool(value: Any, default: bool) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
-def _parse_grammar(value: Any) -> tuple[str, ...]:
-    if isinstance(value, str):
-        items = value.split(",")
-    else:
-        items = value or []
-    grammar = tuple(str(item).strip() for item in items if str(item).strip())
-    return grammar or DEFAULT_GRAMMAR
 
 
 def make_live_filter(config: VoiceRuntimeConfig) -> LiveBandpass | None:
@@ -456,8 +433,8 @@ def silence_cutoff(
 def clean_transcript(text: str, wake_word: str) -> str:
     words = text.split()
     wake_words = wake_word.replace("_", " ").split()
-    if words[:len(wake_words)] == wake_words:
-        return " ".join(words[len(wake_words):]).strip()
+    if words[: len(wake_words)] == wake_words:
+        return " ".join(words[len(wake_words) :]).strip()
     return text
 
 
@@ -641,7 +618,8 @@ def load_wake_model(model_name: str):
         _restore_fd2(saved)
 
     model_key = next(
-        key for key in oww.models
+        key
+        for key in oww.models
         if key not in {"embedding_model", "melspectrogram", "silero_vad"}
     )
     return oww, model_key
@@ -667,10 +645,13 @@ def _resolve_oww_model(name: str) -> str:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         import openwakeword
-    models_dir = os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models")
+    models_dir = os.path.join(
+        os.path.dirname(openwakeword.__file__), "resources", "models"
+    )
     utility_models = {"embedding_model", "melspectrogram", "silero_vad"}
     candidates = [
-        fname for fname in os.listdir(models_dir)
+        fname
+        for fname in os.listdir(models_dir)
         if fname.endswith(".onnx") and os.path.splitext(fname)[0] not in utility_models
     ]
     for fname in candidates:
@@ -711,7 +692,9 @@ def main() -> None:
     parser.add_argument("--wake-hits", type=int)
     parser.add_argument("--wake-word")
     parser.add_argument("--grammar", help="Comma-separated Vosk grammar override")
-    parser.add_argument("--trials", type=int, default=0, help="Run this many voice turns")
+    parser.add_argument(
+        "--trials", type=int, default=0, help="Run this many voice turns"
+    )
     args = parser.parse_args()
 
     config = load_voice_runtime_config(
@@ -733,7 +716,9 @@ def main() -> None:
         empties = 0
         latencies: list[int] = []
         for trial in range(args.trials):
-            print(f"Trial {trial + 1}/{args.trials}: listening for {config.wake_word!r}")
+            print(
+                f"Trial {trial + 1}/{args.trials}: listening for {config.wake_word!r}"
+            )
             turn = runtime.next_turn()
             hits += int(turn.wake_score >= config.threshold)
             empties += int(turn.empty)

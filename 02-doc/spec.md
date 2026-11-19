@@ -29,9 +29,9 @@ from dome_voice import (
 
 ## Configuration
 
-All tuned hardware parameters live in `dome_voice/runtime.py:TUNED_VOICE_PARAMETERS`. Override via:
-- env var `CONTROL_VOICE_TUNE_CONFIG` or `VOICE_TUNE_CONFIG` pointing to a tune YAML
-- `load_voice_runtime_config(path=...)` directly
+Defaults live once, in `dome_voice/runtime.py`'s `VoiceConfigFile` (a strict pydantic model). The robot's tuned values live in `config/voice.yaml`, which overrides only the keys it names (F02). It reaches the code through:
+- `voice_input`'s `config` parameter, which `robot.launch.py` sets to the installed file (no environment variable; dome2 F07)
+- `load_voice_runtime_config(path=...)`, or `python3 -m dome_voice.runtime --config <path>`
 
 ## Dependencies
 

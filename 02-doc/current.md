@@ -15,7 +15,7 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - `speech_output_node.py` — ROS2 node: subscribes `/announcement`, speaks via Piper TTS + ALSA
 - `__init__.py` — public API surface
 - `test/` — 37/42 passing; see Known Issues
-- `01-literate/` — literate docs: 00-overview, 01-runtime, 02-intent_mapper, 03-voice_input_node, 04-speech_output_node, X01-audio_feedback
+- `01-literate/` — literate docs: 00-overview, 01-runtime, 02-intent_mapper, 03-voice_input_node, 04-speech_output_node, 05-launch, X01-audio_feedback, X02-testvoice (rebuilt 2026-11-19)
 
 ## Recent Changes (2026-05-14)
 
@@ -31,10 +31,9 @@ session — pre-existing, previously undetected)**: see
 `05-issues/open/I01-test-suite-regressions.md`.
 - `voice_input_node`'s beep path reads `self.voice_config`, unset on the
   node under test (3 failures).
-- `voice_runtime`'s fake-model test gets `"alexa stop"` instead of `"stop"`
-  — wake word not stripped before the intent-mapper step.
-- `voice_runtime_config`'s `CONTROL_VOICE_TUNE_CONFIG` env var override
-  isn't taking effect in `load_voice_runtime_config`.
+- The other two (`"alexa stop"`, the env-var override) were the shell's
+  `DOME_VOICE_CONFIG` leaking in. Fixed by F02; the env vars are gone
+  since dome2 F07 (2026-11-19).
 
 ## Quick Commands
 

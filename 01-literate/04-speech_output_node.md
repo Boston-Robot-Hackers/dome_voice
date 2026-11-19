@@ -1,77 +1,106 @@
 ---
-version: "1.0"
-generated: "2026-05-13"
+version: "2.0"
+generated: "2026-11-19"
 ---
 
-# Chapter 4 — speech_output_node.py
+# 04 — `speech_output_node.py`: Giving the Robot a Voice
 
-## Purpose
+## Introduction
 
-`speech_output_node.py` is the ROS2 speech output adapter. It subscribes to `/announcement`, synthesizes the text payload to a WAV file using Piper TTS, optionally scales the sample amplitude, and plays it via ALSA `aplay`. Like `voice_input_node.py`, it is a thin ROS shell — all the non-trivial logic is in pure functions that can be tested without a running ROS graph.
+`speech_output_node` subscribes to `/announcement` and speaks each message aloud. It is the only node in the stack that produces speech. Anything that wants the robot to talk publishes an announcement and leaves the rest to this node.
 
-## Module Structure
+Each announcement goes through three external steps:
 
-```
-speech_output_node.py
-├── synthesize_to_wav()   # invoke Piper binary via subprocess
-├── play_wav()            # invoke aplay via subprocess
-├── scale_pcm_frames()    # PCM sample amplitude scaling (pure, no I/O)
-├── apply_wav_gain()      # read WAV → scale → write new WAV
-├── parse_speech_gain()   # validate SPEECH_GAIN env var
-├── parse_length_scale()  # validate PIPER_LENGTH_SCALE env var
-├── SpeechOutputNode      # ROS2 Node subclass
-│   ├── __init__          # subscribe, read env vars
-│   ├── on_announcement() # callback: parse msg, call speak_text
-│   ├── make_wav_path()   # create a temp file, return path
-│   └── speak_text()      # orchestrate synth → gain → play → cleanup
-└── main()                # rclpy init/spin/shutdown
+```mermaid
+flowchart LR
+    A["/announcement"] --> B[Announcement.from_msg]
+    B --> C["piper<br/>text → WAV"]
+    C --> D["apply_wav_gain<br/>(if gain ≠ 1)"]
+    D --> E["aplay<br/>WAV → speaker"]
 ```
 
-## Configuration via Environment Variables
+## The announcement contract
 
-All configuration comes from environment variables, validated at startup by `parse_speech_gain` and `parse_length_scale`. This avoids ROS parameter boilerplate for a node that runs as a system service.
+The message type and the `Announcement` dataclass both come from `dome_control.announcement_contract`. An announcement has `text`, `priority`, `stamp`, `source` and `dedup_key`.
 
-| Variable | Default | Meaning |
+This node uses only `text`, plus `priority` and `source` for the log line. **Priorities and dedup keys are carried but not acted on yet.** There is no queue, no pre-emption and no dropping of repeats. A safety announcement waits behind chit-chat.
+
+## Configuration by environment
+
+All settings are read once, in `__init__`, from environment variables:
+
+| Variable | Default here | Meaning |
 |---|---|---|
-| `DOME_PIPER_BIN` | `"piper"` | Path to Piper binary |
-| `DOME_PIPER_MODEL_PATH` | `""` | Path to `.onnx` voice model (required for speech) |
-| `PIPER_LENGTH_SCALE` | `"1.25"` | TTS speed (>1 = slower) |
-| `SPEECH_ALSA_DEVICE` | `""` | ALSA device string, e.g. `hw:1,0`; empty = default |
-| `SPEECH_GAIN` | `"0.35"` | PCM amplitude multiplier applied after synthesis |
-| `SPEECH_TMP_DIR` | system tmp | Directory for temporary WAV files |
+| `DOME_PIPER_BIN` | `piper` | the piper executable |
+| `DOME_PIPER_MODEL_PATH` | *(none, required)* | the `.onnx` voice model |
+| `SPEECH_ALSA_DEVICE` | `""` (ALSA default) | playback device for `aplay -D` |
+| `SPEECH_TMP_DIR` | system temp dir | where WAV files are written |
+| `SPEECH_GAIN` | `0.35` | output volume multiplier |
+| `PIPER_LENGTH_SCALE` | `1.25` | speech tempo; above 1.0 is slower |
 
-`SPEECH_GAIN` defaults to 0.35 (35%) because Piper's default output level clips the amplifier on the robot's speaker. The gain is applied in software rather than at the ALSA mixer to keep the pipeline hardware-agnostic.
+**On the robot, the launch file supplies these** (chapter 05), with its own fallbacks: gain 0.25, length scale 1.0 and device `plughw:0,0`. So the defaults in this table apply only when the node is run by hand.
 
-## speak_text() Flow
+Gain and length scale are **validated at startup**: a non-number or a value ≤ 0 raises, and the node fails to start. That is the right place to fail, because a bad value would otherwise surface on the first announcement, possibly much later.
 
-```
-speak_text(text)
-  │
-  ├─ make_wav_path()         → raw.wav  (temp file)
-  ├─ synthesize_to_wav()     → writes PCM to raw.wav via Piper subprocess
-  │
-  ├─ if speech_gain != 1.0:
-  │    make_wav_path()       → gained.wav  (second temp file)
-  │    apply_wav_gain()      → copies raw.wav with scaled samples
-  │    playback_path = gained.wav
-  │  else:
-  │    playback_path = raw.wav
-  │
-  ├─ play_wav(playback_path) → aplay subprocess
-  │
-  └─ finally: os.remove() both temp files (best-effort)
+## Speaking one message
+
+### Synthesis
+
+```python
+cmd = [piper_bin, "--model", model_path, "--output_file", wav_path,
+       "--length_scale", str(length_scale), "--quiet"]
+subprocess.run(cmd, input=text.encode("utf-8"), check=True, capture_output=True)
 ```
 
-The `finally` block cleans up regardless of subprocess errors. `FileNotFoundError` is silently swallowed in cleanup because synthesis may have failed before the file was written.
+Piper reads the text on stdin and writes a WAV. It is a neural TTS that runs comfortably on a Pi. Running it as a **subprocess** keeps its native libraries out of the ROS process. Starting it per message costs a model load each time, but announcements are rare.
 
-## scale_pcm_frames() — PCM Arithmetic
+### Gain, in pure Python
 
-WAV PCM samples are little-endian signed integers. The function unpacks each sample, multiplies by `gain`, clamps to the representable range for the sample width, and repacks. Supported widths: 1-byte (`b`), 2-byte (`h`), 4-byte (`i`).
+Piper's output is often too loud for a small speaker, so the node scales every sample:
 
-The clamp prevents wrap-around distortion when gain > 1.0 (though the default gain of 0.35 never triggers it).
+```python
+def scale_pcm_frames(frames: bytes, sample_width: int, gain: float) -> bytes:
+    max_value = (1 << (sample_width * 8 - 1)) - 1
+    min_value = -(1 << (sample_width * 8 - 1))
+    ...
+    for offset in range(0, len(frames), sample_width):
+        sample = struct.unpack_from(fmt, frames, offset)[0]
+        adjusted = int(sample * gain)
+        adjusted = max(min(adjusted, max_value), min_value)
+```
 
-## Testing Strategy
+- **Multiplying the samples is a linear volume change.** A gain of 0.25 is about −12 dB.
+- **Clipping protects against gain > 1.** Without it, a loud sample would wrap around from +32767 to −32768, which sounds like a crack.
+- **It handles 8-, 16- and 32-bit WAVs**, choosing the `struct` format from the sample width. One caveat: 8-bit WAV is *unsigned* by the WAV spec, and this treats it as signed. Piper writes 16-bit, so it never matters here.
 
-All pure functions (`synthesize_to_wav`, `play_wav`, `scale_pcm_frames`, `apply_wav_gain`, `parse_speech_gain`, `parse_length_scale`) are tested without ROS or hardware. The node callback (`on_announcement`) is tested by constructing a bare `SpeechOutputNode` subclass that skips `rclpy.Node.__init__`, then calling the method directly with a mock message.
+With a gain of exactly 1.0, the step is skipped and the original file is played.
 
-`speak_text` is tested by patching `synthesize_to_wav`, `apply_wav_gain`, `play_wav`, and `make_wav_path` — verifying the orchestration logic (gain branch, cleanup) without touching disk or spawning subprocesses.
+### Playback and cleanup
+
+`aplay` plays the file, on `SPEECH_ALSA_DEVICE` if set. The `finally` block removes both temp files, the synthesised one and the gained one, even when synthesis or playback fails.
+
+## Failure handling
+
+```python
+try:
+    self.speak_text(announcement.text)
+    ...
+except Exception as exc:
+    self.get_logger().error(f"Speech output failed: {exc}")
+```
+
+**One failed announcement must not kill the node**, so every error is logged and the node carries on. That's what you see on the robot today: `No such file or directory` for the missing piper binary, once per announcement, with the node still running.
+
+The catch is broad, though. A programming error in `speak_text` would be logged the same way as a missing file.
+
+## Shutdown
+
+`main()` treats `KeyboardInterrupt` and `ExternalShutdownException` (the launcher's SIGTERM) as a normal stop. Then it destroys the node and calls `rclpy.try_shutdown()`, so stopping a launch prints no traceback.
+
+## Observations
+
+1. **Speech blocks the callback.** `speak_text` runs piper and aplay synchronously inside the subscription callback. With the default single-threaded executor, announcements arriving during speech queue up in the 10-deep subscription buffer, and anything beyond that is dropped.
+2. **Priority is ignored.** The contract supports priorities and dedup keys, and dome_control's features F08 to F10 (priority queue, barge-in, dedup) plan to use them. Until then, the order is first-come, first-served.
+3. **Two sets of defaults.** This node's fallbacks (gain 0.35, length 1.25) differ from the launch file's (0.25, 1.0). Only the launch file's apply on the robot. One set would be enough.
+4. **The gain loop is per-sample Python.** For a few seconds of 22 kHz audio it's fine; `numpy` would do the same in one vectorised call.
+5. **A broad `except Exception`** hides bugs as runtime failures. Catching `subprocess.CalledProcessError`, `OSError` and `wave.Error` would cover the real cases.

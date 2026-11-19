@@ -1,108 +1,163 @@
+#!/usr/bin/env python3
+# test_voice_runtime_config — voice config: defaults, YAML layering, overrides
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-19
+# Updated: 2026-11-19
+# Open Source Under MIT license
+"""The voice config has one set of defaults, and a YAML overrides only its keys."""
+
+import json
+from dataclasses import replace
 from pathlib import Path
 
-from dome_voice.runtime import (
-    DEFAULT_GRAMMAR,
-    config_from_tune_mapping,
-    load_voice_runtime_config,
-)
+import pytest
+from pydantic import ValidationError
+
+from dome_voice.runtime import DEFAULT_GRAMMAR, load_voice_runtime_config
+
+REPO = Path(__file__).resolve().parent.parent
+ROBOT_YAML = REPO / "config" / "voice.yaml"
+BASELINE = Path(__file__).resolve().parent / "fixtures" / "robot_config_baseline.json"
 
 
-def test_config_from_tune_mapping_reads_stream_settings_and_sox_chain():
-    cfg = config_from_tune_mapping(
-        {
-            "capture_card": 2,
-            "playback_card": 3,
-            "sox_chain": {"highpass": 120, "lowpass": 4000},
-            "stream_settings": {
-                "wake_word": "alexa",
-                "threshold": 0.3,
-                "wake_hits": 1,
-                "live_filter": True,
-                "vosk_model": "small",
-                "grammar": [
-                    "go forward",
-                    "go backward",
-                    "turn left",
-                    "turn right",
-                    "stop",
-                ],
-            },
-        },
-        source_path="/tmp/active.yaml",
+def write_yaml(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "voice.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_no_yaml_gives_the_defaults():
+    cfg = load_voice_runtime_config()
+    assert cfg.source_path == "defaults"
+    assert (cfg.wake_word, cfg.threshold, cfg.wake_hits) == ("alexa", 0.3, 1)
+    assert cfg.grammar == DEFAULT_GRAMMAR
+    assert (cfg.highpass, cfg.lowpass) == (120.0, 4000.0)
+
+
+def test_empty_yaml_gives_the_defaults(tmp_path):
+    from_file = replace(
+        load_voice_runtime_config(write_yaml(tmp_path, "")), source_path=""
     )
+    defaults = replace(load_voice_runtime_config(), source_path="")
+    assert from_file == defaults
 
-    assert cfg.source_path == "/tmp/active.yaml"
-    assert cfg.capture_card == 2
-    assert cfg.playback_card == 3
-    assert cfg.wake_word == "alexa"
-    assert cfg.threshold == 0.3
+
+def test_partial_yaml_overrides_only_its_keys(tmp_path):
+    path = write_yaml(tmp_path, "stream_settings:\n  threshold: 0.5\n")
+    cfg = load_voice_runtime_config(path)
+    assert cfg.source_path == str(path)
+    assert cfg.threshold == 0.5
     assert cfg.wake_hits == 1
-    assert cfg.live_filter is True
-    assert cfg.highpass == 120
-    assert cfg.lowpass == 4000
-    assert cfg.vosk_model == "small"
-    assert cfg.grammar == (
-        "go forward",
-        "go backward",
-        "turn left",
-        "turn right",
-        "stop",
-    )
+    assert cfg.wake_word == "alexa"
 
 
-def test_load_voice_runtime_config_uses_path_and_overrides(tmp_path: Path):
-    path = tmp_path / "active.yaml"
-    path.write_text(
+def test_reads_all_sections(tmp_path):
+    path = write_yaml(
+        tmp_path,
         """
-capture_card: 0
-sox_chain:
-  highpass: 80
-  lowpass: 3000
-stream_settings:
-  wake_word: alexa
-  threshold: 0.5
-  wake_hits: 2
-  grammar: go forward,stop
+capture_card: 2
+playback_card: 3
+sox_chain: {highpass: 80, lowpass: 3000}
+stream_settings: {wake_word: hey_marvin, wake_hits: 2}
+beep: {fail_freq: 200}
 """,
-        encoding="utf-8",
     )
+    cfg = load_voice_runtime_config(path)
+    assert (cfg.capture_card, cfg.playback_card) == (2, 3)
+    assert (cfg.highpass, cfg.lowpass) == (80.0, 3000.0)
+    assert (cfg.wake_word, cfg.wake_hits) == ("hey_marvin", 2)
+    assert cfg.beep_fail_freq == 200
 
+
+@pytest.mark.parametrize(
+    "text, misspelled",
+    [
+        ("stream_settings:\n  treshold: 0.7\n", "treshold"),
+        ("beeps:\n  wake_freq: 900\n", "beeps"),
+        ("sox_chain:\n  bandpass: 100\n", "bandpass"),
+    ],
+)
+def test_unknown_key_raises_and_names_it(tmp_path, text, misspelled):
+    with pytest.raises(ValidationError) as error:
+        load_voice_runtime_config(write_yaml(tmp_path, text))
+    assert misspelled in str(error.value)
+
+
+@pytest.mark.parametrize("spelling", ["none", "None", "''"])
+def test_none_turns_a_cutoff_off(tmp_path, spelling):
+    path = write_yaml(tmp_path, f"sox_chain:\n  highpass: {spelling}\n")
+    assert load_voice_runtime_config(path).highpass is None
+
+
+def test_grammar_from_a_comma_string(tmp_path):
+    path = write_yaml(tmp_path, "stream_settings:\n  grammar: go forward, stop\n")
+    assert load_voice_runtime_config(path).grammar == ("go forward", "stop")
+
+
+@pytest.mark.parametrize("grammar", ["''", "[]", "' , '"])
+def test_empty_grammar_raises(tmp_path, grammar):
+    path = write_yaml(tmp_path, f"stream_settings:\n  grammar: {grammar}\n")
+    with pytest.raises(ValidationError):
+        load_voice_runtime_config(path)
+
+
+def test_out_of_range_value_raises(tmp_path):
+    path = write_yaml(tmp_path, "stream_settings:\n  threshold: 1.5\n")
+    with pytest.raises(ValidationError):
+        load_voice_runtime_config(path)
+
+
+def test_missing_named_file_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        load_voice_runtime_config(tmp_path / "missing.yaml")
+
+
+@pytest.mark.parametrize(
+    "name", ["DOME_VOICE_CONFIG", "CONTROL_VOICE_TUNE_CONFIG", "VOICE_TUNE_CONFIG"]
+)
+def test_environment_does_not_choose_the_file(monkeypatch, tmp_path, name):
+    """No config-path env vars (dome2 stack/config_conventions.md)."""
+    path = write_yaml(tmp_path, "stream_settings:\n  threshold: 0.4\n")
+    monkeypatch.setenv(name, str(path))
+    cfg = load_voice_runtime_config()
+    assert cfg.source_path == "defaults"
+    assert cfg.threshold == 0.3
+
+
+def test_overrides_beat_the_yaml(tmp_path):
+    path = write_yaml(tmp_path, "stream_settings:\n  threshold: 0.5\n  wake_hits: 2\n")
     cfg = load_voice_runtime_config(
         path,
-        overrides={"threshold": 0.25, "wake_hits": 1, "grammar": "turn left,stop"},
+        overrides={
+            "threshold": 0.25,
+            "wake_hits": None,
+            "grammar": "turn left,stop",
+            "beep_wake_freq": 1000,
+            "highpass": 90,
+        },
     )
-
-    assert cfg.source_path == str(path)
     assert cfg.threshold == 0.25
-    assert cfg.wake_hits == 1
-    assert cfg.highpass == 80
-    assert cfg.lowpass == 3000
+    assert cfg.wake_hits == 2
     assert cfg.grammar == ("turn left", "stop")
+    assert cfg.beep_wake_freq == 1000
+    assert cfg.highpass == 90
 
 
-def test_load_voice_runtime_config_env_path(monkeypatch, tmp_path: Path):
-    path = tmp_path / "active.yaml"
-    path.write_text(
-        """
-stream_settings:
-  wake_word: hey robot
-  threshold: 0.4
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CONTROL_VOICE_TUNE_CONFIG", str(path))
-
-    cfg = load_voice_runtime_config()
-
-    assert cfg.source_path == str(path)
-    assert cfg.wake_word == "hey robot"
-    assert cfg.threshold == 0.4
+@pytest.mark.parametrize("key", ["treshold", "wake_freq", "beep_threshold"])
+def test_unknown_override_raises(key):
+    with pytest.raises(ValueError):
+        load_voice_runtime_config(overrides={key: 1})
 
 
-def test_missing_tune_config_falls_back_to_tuned_defaults(tmp_path: Path):
-    cfg = load_voice_runtime_config(tmp_path / "missing.yaml")
+def test_bad_override_value_raises():
+    with pytest.raises(ValidationError):
+        load_voice_runtime_config(overrides={"wake_hits": 0})
 
-    assert cfg.wake_word == "alexa"
-    assert cfg.threshold == 0.7
-    assert cfg.wake_hits == 3
-    assert cfg.grammar == DEFAULT_GRAMMAR
+
+def test_robot_yaml_matches_the_baseline():
+    """config/voice.yaml must give what the robot ran before F02."""
+    cfg = load_voice_runtime_config(ROBOT_YAML).to_dict()
+    cfg.pop("source_path")
+    cfg.pop("vosk_model_path")
+    assert cfg == json.loads(BASELINE.read_text())

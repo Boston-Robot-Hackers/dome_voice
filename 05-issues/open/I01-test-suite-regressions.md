@@ -32,3 +32,14 @@
   stripping order, env var precedence), not one root cause. Needs
   triage/fix in a future session; out of scope for this checkpoint (no
   source changes were otherwise needed here).
+
+## Update (2026-11-19): two of the five fixed by F02
+
+**Failures 2 and 3 had one cause: the shell's `DOME_VOICE_CONFIG`.** The robot's `.bashrc` exports it, and the loader reads it before `CONTROL_VOICE_TUNE_CONFIG`. So both tests loaded the robot's YAML (wake word `hey_marvin`) instead of what they set up:
+
+- Failure 2: `"alexa stop"` wasn't stripped, because the wake word was `hey_marvin`.
+- Failure 3: the monkeypatched path lost to `DOME_VOICE_CONFIG`.
+
+F02's TF02.0 added an autouse fixture (`test/conftest.py`) that cleared all three variables. Then dome2's F07 removed the variables from the code entirely, so the loader no longer reads the environment and the fixture was deleted. Both tests pass, with or without the variable exported.
+
+**Still open: failure 1**, the three `test_voice_input_node.py` tests. They build `VoiceInputNode` with `__new__`, which skips `__init__`, so `voice_config` is never set. The fix belongs in the tests, not the node.

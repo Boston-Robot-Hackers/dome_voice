@@ -1,19 +1,29 @@
 ---
-version: "1.0"
-generated: "2026-05-12"
+version: "2.0"
+generated: "2026-11-19"
 ---
 
-# intent_mapper.py — Transcript to Intent
+# 02 — `intent_mapper.py`: From Words to Intents
 
-## What This Module Does
+## Introduction
 
-`intent_mapper.py` converts a raw Vosk transcript string into a structured intent dict. It sits between the STT layer (`runtime.py`) and any downstream consumer (ROS node, test harness, CLI). Its job is narrow: accept a string, return either `None` (unrecognized) or a dict like `{"name": "turn_right", "source": "voice", "slots": {}}`.
+The recogniser hands over a string such as `"turn right"` or `"[unk]"`. The rest of the robot wants something structured: *which action, from where, with what arguments*.
 
-The module is deliberately ignorant of audio, ROS, or configuration. It is a pure function wrapped in a thin class.
+`intent_mapper.py` is that translation, in about 40 lines. It has no ROS, no audio and no state, which makes it the easiest module in the package to test.
 
-## The Phrase Table
+## The output shape
 
-All recognized commands live in a single tuple-of-tuples constant:
+Every recognised command becomes the same small dict:
+
+```python
+{"name": "turn_right", "source": "voice", "slots": {}}
+```
+
+- **`name`** is the action, in the stack-wide intent vocabulary that `dome_control` understands.
+- **`source`** is always `"voice"`. Consumers can tell spoken commands apart from intents sent by other front ends.
+- **`slots`** is empty today. It is the place for arguments such as "turn right *ninety degrees*", if the grammar ever grows them.
+
+## The phrase table
 
 ```python
 PHRASE_INTENTS = (
@@ -28,69 +38,49 @@ PHRASE_INTENTS = (
 )
 ```
 
-Each row is `(phrases_tuple, intent_name)`. The phrases tuple is a set of synonyms for a single intent — currently each intent has exactly one phrase, but the structure allows multi-word synonyms without any code change. The intent name is a normalized verb-noun string that consumers dispatch on.
+Each row pairs a tuple of trigger phrases with an intent name. Every tuple has one word today, but the shape allows synonyms: `(("stop", "halt"), "stop")`.
 
-This table is also the source of truth for the grammar fed to Vosk's `KaldiRecognizer` in `runtime.py`. They must stay in sync; currently this is enforced by convention. See the observations section.
+**The table is a tuple of tuples, scanned in order, not a dict.** Order matters, because the first match wins.
 
-## Matching Logic
-
-```python
-def contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
-    return any(phrase in text for phrase in phrases)
-```
-
-`contains_phrase` uses substring matching, not word-boundary matching. This is intentional: Vosk returns clean single-word transcripts for constrained grammars, and the implementation favors simplicity over precision. For multi-word synonyms (e.g. `"turn right"`), substring matching is the natural fit.
-
-`IntentMapper.map_intent` normalizes to lowercase, rejects empty strings and the Vosk OOV token `[unk]`, then scans `PHRASE_INTENTS` in order:
+## Matching
 
 ```python
 def map_intent(self, text: str) -> dict | None:
     normalized_text = text.lower().strip()
     if not normalized_text or normalized_text == "[unk]":
         return None
-
     for phrases, name in PHRASE_INTENTS:
         if contains_phrase(normalized_text, phrases):
             return {"name": name, "source": self.SOURCE, "slots": {}}
-
     return None
 ```
 
-First match wins. Order in `PHRASE_INTENTS` is the priority order if synonyms ever overlap.
+- **Empty and `[unk]` mean "no intent"**, and the node plays the failure beep.
+- **Matching is substring containment** (`phrase in text`), not whole-word. That's acceptable only because Vosk's grammar limits the input to the table's own words, so "stop" can never arrive inside "stopwatch".
+- **The first row wins.** If a transcript had several words, say "stop left", it would map to `stop`. Putting `stop` first is a safe ordering for a robot.
 
-## Data Flow
+## Keeping the grammar in step
 
-```mermaid
-flowchart LR
-    TEXT[transcript string] --> NORM[normalize: lowercase + strip]
-    NORM --> REJECT{empty or\n'[unk]'?}
-    REJECT -- yes --> NONE[None]
-    REJECT -- no --> SCAN[scan PHRASE_INTENTS]
-    SCAN -- match --> DICT["{'name': ..., 'source': 'voice', 'slots': {}}"]
-    SCAN -- no match --> NONE2[None]
-```
+**Two lists must agree:** these phrases, and `runtime.py`'s `DEFAULT_GRAMMAR`.
 
-## Module-Level Singleton
+- A word in the grammar but not in this table is **recognised, then rejected**, with a failure beep.
+- A word in this table but not in the grammar can **never be heard at all**, because Vosk outputs `[unk]` instead.
+
+Nothing checks this today; the notes ask whoever adds a command to update both.
+
+## The module-level wrapper
 
 ```python
 DEFAULT_MAPPER = IntentMapper()
 
 def map_intent(text: str) -> dict | None:
-    """Compatibility wrapper for existing call sites and tests."""
     return DEFAULT_MAPPER.map_intent(text)
 ```
 
-The module exports both the class and a module-level function. The function exists purely for call-site ergonomics and backward compatibility — callers that don't need a custom mapper don't need to instantiate one. Both paths are tested.
+A free function kept for older call sites and tests, such as `testvoice.py`. `IntentMapper` has no state, so sharing one instance is safe.
 
-## Observations and Improvement Opportunities
+## Observations
 
-- **Grammar coupling** — `DEFAULT_GRAMMAR` in `runtime.py` must enumerate exactly the same words as `PHRASE_INTENTS` keys. A drift would cause Vosk to accept phrases the mapper can't handle (returning `None`) or reject valid commands. The fix is to export the word list from `intent_mapper.py` and import it into `runtime.py`:
-
-  ```python
-  # intent_mapper.py
-  GRAMMAR_WORDS = tuple(phrase for phrases, _ in PHRASE_INTENTS for phrase in phrases)
-  ```
-
-- **`slots` is always `{}`** — the dict schema implies future slot filling (e.g. `{"direction": "left"}`), but nothing fills it today. Fine for now; it signals the intended extension point.
-
-- **`contains_phrase` is substring, not token** — `"righteous"` would match `"right"`. In practice this can't happen because Vosk's constrained grammar only returns exact grammar words. But if the grammar ever opens up, `re.search(r'\bright\b', text)` would be safer.
+1. **Derive one list from the other.** Building `DEFAULT_GRAMMAR` from `PHRASE_INTENTS`, or adding a test that asserts they match, would remove the only easy way to break voice input silently.
+2. **Substring matching depends on the grammar.** If the grammar is ever loosened, or free transcription is used, "stop" would match "stopping" and "unstoppable". Matching on word boundaries would make the mapper safe on its own.
+3. **The class adds little.** It holds a constant and one method. It earns its place only if per-instance tables, say per language, are coming.

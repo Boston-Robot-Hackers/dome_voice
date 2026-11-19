@@ -1,41 +1,58 @@
 ---
-version: "1.0"
-generated: "2026-05-12"
+version: "2.0"
+generated: "2026-11-19"
 ---
 
-# audio_feedback.py — Beep Tones (Appendix)
+# X01 — `audio_feedback.py`: Confirmation Beeps
 
-## What This Module Does
+## What it does
 
-`audio_feedback.py` provides a single function, `beep()`, that plays a short sine-wave tone through the system audio output. It is used by `voice_input_node.py` to give audible feedback at three moments: wake-word detection (high, short), command confirmed (mid, short), and command rejected (low, longer).
+`beep()` synthesises a short tone and plays it through `aplay`. The voice node uses three beeps, all set in `config/voice.yaml`:
 
-## Implementation
+| Event | Frequency | Duration | Meaning |
+|---|---|---|---|
+| wake word heard | 880 Hz | 0.3 s | "I'm listening" |
+| intent recognised | 330 Hz | 0.02 s | "got it" (a click) |
+| nothing understood | 220 Hz | 0.6 s | "try again" |
+
+The design leans on *contrast*: a high tone to start, a near-instant tick for success, and a long low tone for failure, so they are easy to tell apart without looking.
+
+## A bell, not a beep
+
+A pure sine sounds harsh and electronic. This one adds a second, *inharmonic* partial and gives both an exponential decay:
 
 ```python
-def beep(frequency: int = 880, duration: float = 0.15, device_index: int = 0) -> None:
-    alsa_device = os.environ.get("SPEECH_ALSA_DEVICE", "")
-    sample_rate = 16000
-    n = int(sample_rate * duration)
-    samples = bytearray(n * 2)
-    amplitude = 0.2
-    for i in range(n):
-        s = int(math.sin(2 * math.pi * frequency * i / sample_rate) * 32767 * amplitude)
-        struct.pack_into("<h", samples, i * 2, max(-32768, min(32767, s)))
-
-    cmd = ["aplay", "-q", "-f", "S16_LE", "-r", str(sample_rate), "-c", "1"]
-    if alsa_device:
-        cmd.extend(["-D", alsa_device])
-    subprocess.run(cmd, input=bytes(samples), check=False, capture_output=True)
+fund = math.sin(2 * math.pi * frequency * t) * math.exp(-4.0 * t)
+partial = math.sin(2 * math.pi * frequency * 2.76 * t) * math.exp(-12.0 * t) * 0.4
 ```
 
-It generates raw PCM in memory (signed 16-bit LE, mono, 16 kHz), then pipes it directly to `aplay`. No temp file, no external dependency beyond `aplay` being on the system.
+- **The 2.76× partial is not a whole-number harmonic.** Real bells have partials at non-integer ratios, which is what makes them sound like bells and not like organ pipes.
+- **The partial decays three times faster** than the fundamental. The tone starts bright and settles into a pure pitch, the way a struck bell does.
 
-`SPEECH_ALSA_DEVICE` selects the output device — same env var pattern as the rest of the pipeline. If unset, `aplay` uses its default output.
+## Building the buffer
 
-`check=False` and `capture_output=True` on the subprocess call mean a missing or broken `aplay` silently fails — the pipeline continues without audio feedback rather than crashing.
+- 16 kHz, 16-bit, **stereo**, with the same sample in both channels, matching the Seeed board's output format.
+- **Amplitude is capped at 7 % of full scale** (`0.07 × volume`). The board's amplifier is loud, and a full-scale beep next to someone's head is painful.
+- `struct.pack_into` writes left and right samples straight into a pre-sized `bytearray`, avoiding a copy per sample.
+
+## Playing it
+
+```python
+cmd = ["aplay", "-q", "-f", "S16_LE", "-r", str(sample_rate), "-c", "2"]
+if alsa_device:
+    cmd.extend(["-D", alsa_device])
+subprocess.run(cmd, input=bytes(buf), check=False, capture_output=True)
+```
+
+The raw PCM goes to `aplay` on stdin, so no file is written. The device comes from **`$SPEECH_ALSA_DEVICE`**, the same variable speech output uses, so beeps and speech come out of the same speaker.
+
+**The call blocks** until the beep finishes, so command capture starts only after the "I'm listening" beep has played.
+
+**But arecord keeps recording during the beep.** Its audio waits in the pipe, and `capture_command` reads it first. Only one 80 ms chunk is skipped (`WAKE_SKIP_CHUNKS`), so most of the 0.3 s beep, picked up by the microphone, is probably fed to Vosk and the speech detector. That is unverified, but it could count as "speech has started" and shorten the real command window.
 
 ## Observations
 
-- **Per-sample Python loop** — the sine wave is computed sample-by-sample in a Python for-loop. For 0.15 s at 16 kHz that is 2400 iterations — negligible latency, but `numpy` vectorization or `array.array` with a list comprehension would be idiomatic.
-
-- **`device_index` parameter is unused** — the signature accepts `device_index` but uses `SPEECH_ALSA_DEVICE` (a string) instead. The parameter is vestigial; removing it or wiring it to an ALSA device index would be cleaner.
+1. **The wake beep is probably recorded.** Skipping the beep's duration in chunks after `on_wake`, instead of one chunk, would keep it out of the command.
+2. **`device_index` is accepted and ignored.** The parameter suggests the caller picks the device, but the environment variable does. The voice node passes it on every call.
+3. **Failures are only half reported.** `check=False` means a non-zero `aplay` exit, such as a busy device, passes silently. Only an exception, such as `aplay` missing, is printed, and that goes to `print(..., file=sys.stderr)` rather than a logger.
+4. **The per-sample loop** builds up to 9 600 samples in Python for the longest beep. That's fine at this size; numpy would make it one expression.

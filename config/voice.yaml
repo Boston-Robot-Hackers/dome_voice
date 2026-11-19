@@ -1,0 +1,42 @@
+# dome_voice settings for the robot. robot.launch.py passes the installed copy
+# to voice_input as its `config` parameter.
+#
+# Defaults live in code (dome_voice/runtime.py, VoiceConfigFile). This file
+# overrides them, and every value the robot uses is written out here so the
+# file says what the robot does. Unknown keys are an error. Paste ~/tune
+# results here, not into code: the shape matches tune's active.yaml.
+
+capture_card: 0                 # ALSA card for arecord (hw:<card>,0)
+playback_card: 0
+
+stream_settings:
+  wake_word: hey_marvin         # openWakeWord model name, or an absolute .onnx path
+  threshold: 0.3                # min wake score per 80 ms chunk (0.0–1.0); raise if false triggers
+  wake_hits: 1                  # consecutive chunks above threshold; raise to resist noise spikes
+                                # (the old in-code table had 0.7 and 3, tuned for "alexa")
+  wake_cooldown_secs: 1.5       # drain the mic this long after a turn before listening again
+  live_filter: true             # apply the sox_chain bandpass to mic input
+  vosk_model: small             # "small" or "large", or a model directory
+  grammar: [stop, right, left, explore, describe, objects, status, help]
+                                # must include every phrase in intent_mapper.PHRASE_INTENTS
+  silence_dbfs: none            # fixed silence level (dBFS); none = learn it from the room
+  silence_margin: 5.0           # dB above the noise floor that counts as speech
+  silence_secs: 1.0             # this much silence ends a command
+  min_command_secs: 0.4         # a command can't end sooner than this
+  command_start_secs: 2.5       # give up if speech hasn't started by then
+  max_command_secs: 8.0         # hard cap on one command
+
+sox_chain:                      # bandpass cutoffs in Hz; none turns a side off
+  highpass: 120
+  lowpass: 4000
+
+beep:
+  wake_freq: 880                # Hz — wake word detected
+  wake_duration: 0.3            # seconds
+  wake_volume: 1.0              # 0.0–1.0
+  intent_freq: 330              # Hz — intent recognized
+  intent_duration: 0.02
+  intent_volume: 1.0
+  fail_freq: 220                # Hz — no intent / empty turn
+  fail_duration: 0.6
+  fail_volume: 1.0

@@ -1,121 +1,94 @@
 ---
-version: "1.0"
-generated: "2026-05-12"
+version: "2.0"
+generated: "2026-11-19"
 ---
 
-# voice_input_node.py — ROS2 Adapter
+# 03 — `voice_input_node.py`: The ROS Shell
 
-## What This Module Does
+## Introduction
 
-`voice_input_node.py` is the only ROS2-aware file in `dome_voice`. Everything below it (`runtime.py`, `intent_mapper.py`, `audio_feedback.py`) is ROS-free and testable in isolation. This file's sole job is to wire the voice pipeline into ROS2: spin a node, call `VoiceRuntime.next_turn()` in a blocking loop, and publish results to `/intent` and `/voice/state`.
+This is where the ROS-free pipeline meets the robot. `voice_input_node.py` does four things:
 
-The architectural boundary is intentional: isolating ROS here means the core pipeline can be unit-tested, reused, or replaced without any ROS dependency.
+- runs `VoiceRuntime` in a loop, one turn at a time
+- maps each transcript to an intent
+- publishes the intent on `/intent` and the node's state on `/voice/state`
+- plays a beep at each step, so the person gets feedback without a screen
 
-## Node Structure
+It is deliberately thin: about 100 lines, with all the audio logic left in `runtime.py`.
 
-`VoiceInputNode` extends `rclpy.node.Node` and owns two publishers:
+## Two topics, both plain strings
 
 ```python
-class VoiceInputNode(Node):
-    def __init__(self):
-        super().__init__("voice_input")
-        self.intent_pub = self.create_publisher(String, "/intent", 10)
-        self.state_pub  = self.create_publisher(String, "/voice/state", 10)
-        self.intent_mapper = IntentMapper()
+self.intent_pub = self.create_publisher(String, "/intent", 10)
+self.state_pub = self.create_publisher(String, "/voice/state", 10)
 ```
 
-- `/intent` — JSON-serialized intent dicts (e.g. `{"name": "turn_right", "source": "voice", "slots": {}}`)
-- `/voice/state` — plain string state transitions: `IDLE`, `LISTENING`, `PROCESSING`, `SPEAKING`
+- **`/intent`** carries the intent dict as **JSON inside a `std_msgs/String`**. That avoids a custom message type, so any node can read it. The cost is that the schema is a convention, not something ROS checks.
+- **`/voice/state`** carries one of `IDLE`, `LISTENING`, `PROCESSING`, `SPEAKING`. Another node can, for example, pause motion while the robot is listening.
 
-The node does not subscribe to anything. It is a producer only.
-
-## State Machine
-
-The voice pipeline moves through four states per turn:
+## The state cycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> IDLE: startup
-    IDLE --> LISTENING: wake word detected
-    LISTENING --> PROCESSING: transcript received
-    PROCESSING --> SPEAKING: intent resolved or rejected
-    SPEAKING --> IDLE: next_turn loop restarts
+    [*] --> IDLE
+    IDLE --> LISTENING: wake word (880 Hz beep)
+    LISTENING --> PROCESSING: transcript ready
+    LISTENING --> SPEAKING: empty turn (220 Hz beep)
+    PROCESSING --> SPEAKING: intent found (330 Hz) or not (220 Hz)
+    SPEAKING --> IDLE: beep done
 ```
 
-State transitions are published via `publish_state()` so any downstream node can react (e.g. light ring, TTS feedback).
+**"SPEAKING" really means "giving feedback".** The node only plays a beep here. Real speech comes from `speech_output_node`, which this node knows nothing about.
 
-## Turn Processing
+## A main loop instead of `spin`
 
-`process_turn` handles the full response to a completed `VoiceTurn`:
+Most ROS nodes call `rclpy.spin` and react to callbacks. This one **has no subscriptions**, so it owns its thread with a plain loop:
 
 ```python
-def process_turn(self, turn: VoiceTurn, device_index: int = 0) -> None:
-    if turn.empty:
-        # no command heard after wake — log diagnostics, beep rejection tone
-        self.publish_state("SPEAKING")
-        beep(frequency=220, duration=0.15, device_index=device_index)
-        return
-    self.process_transcript(turn.text, device_index=device_index)
+while rclpy.ok():
+    def on_wake(_wake):
+        node.get_logger().info("Wake word detected — speak your command")
+        node.publish_state("LISTENING")
+        beep(...)
+
+    turn = runtime.next_turn(ok_fn=rclpy.ok, on_wake=on_wake)
+    if turn.metadata and not turn.metadata.get("wake", {}).get("wake_hit", False):
+        break
+    node.process_turn(turn, device_index=device_index)
+    node.publish_state("IDLE")
 ```
 
-An empty turn means the wake word fired but no command was heard (silence timeout, OOV rejection, or `rclpy.ok()` returned False mid-capture). The node logs the noise floor and cutoff values from `turn.metadata` to aid tuning, then plays a low rejection beep.
+Three things to notice:
 
-For non-empty turns, `process_transcript` maps the text to an intent:
+- **`on_wake` is a callback into the runtime.** The runtime knows nothing about ROS or beeps; it just calls back at the moment of the wake, which is exactly when the beep has to play.
+- **`ok_fn=rclpy.ok` makes the stop prompt.** On SIGTERM, `rclpy.ok()` turns false, the runtime notices within one 80 ms chunk, and `next_turn` returns without a wake.
+- **A turn without a wake ends the node.** That's right for shutdown. But it also means that if `arecord` dies, the stream ends, and the node exits quietly with no error logged.
+
+`finally` closes arecord, destroys the node, and shuts rclpy down if it is still up.
+
+## Turning a turn into feedback
+
+`process_turn` splits on whether anything was heard:
+
+- **Empty turn.** Log the noise floor, the cutoff, and whether speech ever started. That is the information needed to tune silence detection. Then play the failure beep.
+- **Text.** Hand it to `process_transcript`, which maps it, publishes the intent if there is one, and plays the matching beep.
+
+The empty-turn log line is the most useful diagnostic the node has. When a command "isn't heard", the floor and cutoff show whether it was too quiet or never started.
+
+## Configuration
 
 ```python
-def process_transcript(self, text: str, device_index: int = 0) -> None:
-    intent = self.intent_mapper.map_intent(text)
-    if intent:
-        self.publish_intent(intent)
-        self.publish_state("SPEAKING")
-        beep(frequency=330, duration=0.02, device_index=device_index)  # short confirm
-    else:
-        self.publish_state("SPEAKING")
-        beep(frequency=220, duration=0.15, device_index=device_index)  # low reject
+voice_config = load_voice_runtime_config()
+device_index = int(os.environ.get("VOICE_DEVICE_INDEX", voice_config.capture_card))
 ```
 
-Two distinct beep profiles signal success vs. rejection without requiring visual feedback.
+- The config comes from the node's `config` parameter, which `robot.launch.py` sets to the installed `voice.yaml` (chapter 05). An empty parameter stops the node at startup. The same object is shared with `VoiceRuntime`, and the node reads its beep settings from it.
+- `device_index` is passed to every `beep()`. **But `beep()` ignores it**: it plays on `$SPEECH_ALSA_DEVICE` instead (chapter X01).
 
-## Main Loop
+## Observations
 
-```python
-def main():
-    voice_config = load_voice_runtime_config()
-    device_index = int(os.environ.get("VOICE_DEVICE_INDEX", voice_config.capture_card))
-
-    rclpy.init()
-    node = VoiceInputNode()
-    runtime = VoiceRuntime(voice_config)
-
-    try:
-        node.publish_state("IDLE")
-        while rclpy.ok():
-            def on_wake(_wake):
-                node.publish_state("LISTENING")
-                beep(frequency=880, duration=0.02, device_index=device_index)
-
-            turn = runtime.next_turn(ok_fn=rclpy.ok, on_wake=on_wake)
-            if turn.metadata and not turn.metadata.get("wake", {}).get("wake_hit", False):
-                break
-            node.process_turn(turn, device_index=device_index)
-            node.publish_state("IDLE")
-    finally:
-        runtime.close()
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
-```
-
-`on_wake` is a closure defined inside the loop — it captures `node` and `device_index` from the enclosing scope and is passed to `runtime.next_turn()` so the LISTENING state publishes at the exact moment the wake word fires, before the STT phase begins.
-
-The `break` condition handles the case where `rclpy.ok()` returned False mid-wake — `next_turn` returns a wake-miss turn rather than blocking forever.
-
-## Observations and Improvement Opportunities
-
-- **`on_wake` closure redefined every iteration** — harmless, but slightly wasteful. Extracting it as a method or defining it once before the loop is cleaner.
-
-- **No lifecycle node** — using `rclpy.node.Node` directly means the node starts active immediately. A `LifecycleNode` would let the ROS graph bring it up/down cleanly (e.g. during robot bringup sequencing), but adds significant boilerplate for a node that has no meaningful inactive state.
-
-- **`device_index` is unused in `VoiceRuntime`** — it's passed to `beep()` for audio output device selection, but `VoiceRuntime` uses `capture_card` from config for input. The naming is slightly confusing; `output_device_index` would be clearer.
-
-- **`rclpy.ok()` passed as `ok_fn`** — this is the right pattern for testability: the runtime never imports `rclpy` directly. Any callable that returns bool works, making `next_turn` testable with a lambda counter.
+1. **`device_index` and `VOICE_DEVICE_INDEX` do nothing.** They are carried through four calls and then dropped by `beep()`. Removing them, or making `beep()` use them, would remove a misleading knob.
+2. **The beep call is written out four times** with the same three attributes. A small `beep_for(kind)` helper would take that from 4 × 4 lines to 4 × 1.
+3. **A dead microphone exits the node silently.** Logging *why* the loop ended (shutdown vs stream ended vs timeout) would make a failed arecord visible.
+4. **Three tests in I01 fail on `voice_config`.** They build the node with `__new__`, skipping `__init__`, so the attribute added later is never set. The tests need updating, not the node.
+5. **`on_wake` is redefined on every turn.** It is harmless, but defining it once before the loop would read more clearly.

@@ -2,6 +2,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def _make_voice_node():
     with patch("rclpy.node.Node.__init__", return_value=None):
@@ -17,7 +19,10 @@ def _make_voice_node():
 def test_publish_intent():
     _, node = _make_voice_node()
     from dome_voice.voice_input_node import VoiceInputNode
-    VoiceInputNode.publish_intent(node, {"name": "stop", "source": "voice", "slots": {}})
+
+    VoiceInputNode.publish_intent(
+        node, {"name": "stop", "source": "voice", "slots": {}}
+    )
     node.intent_pub.publish.assert_called_once()
     msg = node.intent_pub.publish.call_args[0][0]
     assert json.loads(msg.data) == {"name": "stop", "source": "voice", "slots": {}}
@@ -26,6 +31,7 @@ def test_publish_intent():
 def test_publish_state():
     _, node = _make_voice_node()
     from dome_voice.voice_input_node import VoiceInputNode
+
     VoiceInputNode.publish_state(node, "LISTENING")
     node.state_pub.publish.assert_called_once()
     msg = node.state_pub.publish.call_args[0][0]
@@ -38,7 +44,9 @@ def test_process_transcript_known_intent():
 
     node.intent_mapper = MagicMock()
     node.intent_mapper.map_intent.return_value = {
-        "name": "describe_scene", "source": "voice", "slots": {}
+        "name": "describe_scene",
+        "source": "voice",
+        "slots": {},
     }
     node.publish_state = MagicMock()
     node.publish_intent = MagicMock()
@@ -95,3 +103,26 @@ def test_process_turn_empty_plays_beep():
 
     node.publish_state.assert_called_once_with("SPEAKING")
     mock_beep.assert_called_once_with(frequency=220, duration=0.15, device_index=0)
+
+
+def node_with_config_param(value: str):
+    import dome_voice.voice_input_node as vin
+
+    node = vin.VoiceInputNode.__new__(vin.VoiceInputNode)
+    node.declare_parameter = MagicMock()
+    node.get_parameter = MagicMock()
+    node.get_parameter.return_value.get_parameter_value.return_value.string_value = (
+        value
+    )
+    return node
+
+
+def test_config_path_comes_from_the_parameter():
+    assert node_with_config_param("/x/voice.yaml").config_path() == "/x/voice.yaml"
+
+
+def test_empty_config_parameter_is_an_error(monkeypatch, tmp_path):
+    """No fallback, not even to a DOME_VOICE_CONFIG left in the shell."""
+    monkeypatch.setenv("DOME_VOICE_CONFIG", str(tmp_path / "ignored.yaml"))
+    with pytest.raises(RuntimeError):
+        node_with_config_param("").config_path()
