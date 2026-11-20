@@ -17,11 +17,12 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - **Suggested order:** F03 → F05 → F04 → F07 → F11 → F10 → F06 → F09 → F08.
 - **Chores** are in `04-tasks/chores.md`.
 
-### Planned next: F14 (LLM command path), awaiting approval
+### In progress: F14 (LLM command path)
 
 - **F12 is done** (2026-11-20): 8 live exchanges, STT 0.3 s, Haiku 0.7–1.1 s, go. Findings are in `03-features/done/F12-llm-loop-spike.md`.
 - **F14** adds a second wake word ("hey robbie"; `hey_jarvis` for now) whose turns go to Whisper and Claude on the VM. Claude emits `/intent` through tools, or answers. "hey marvin" and the grammar stay.
-- **Next:** TF14 T01, the tools on the VM side, then T02, trying it on the robot.
+- **T01 and T02 are done** (2026-11-20): every spoken request became the right intent. The failures were downstream (dome_semantic and dome_mission not running, a turn-speed limit in dome_control, now fixed), plus a speaker clash F04 fixes. Results are in TF14 T02.
+- **Next:** F04 (don't listen while speaking), then TF14 T03. Switching to F04 needs your OK.
 
 ### Done: F13 (speech settings in voice.yaml)
 

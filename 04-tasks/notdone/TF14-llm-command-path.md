@@ -5,7 +5,7 @@ The order follows *try it early*: T01 gives a working slice on the existing spik
 Run the tests with `python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/test/`.
 
 ## T01 — Claude emits intents through tools (VM side)
-**Status**: code done, 13 unit tests passing; the manual check on the VM is still to do
+**Status**: done (2026-11-20: on the VM, text in gave a joke, `exploration_start` and `describe_scene`)
 **Description**: Move the spike's `llm_turn.py` and `vm_llm_node.py` into the package, as `dome_voice/llm_turn.py` (ROS-free) and `dome_voice/llm_node.py`.
 
 - **Tools:** one per intent in F14's list. `navigation_go` takes a `label`.
@@ -27,10 +27,40 @@ Run the tests with `python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/tes
 Manual check: `ros2 topic pub --once /voice/llm_text std_msgs/String "data: 'tell me a robot joke'"` gets a spoken joke.
 
 ## T02 — Try it on the robot
-**Status**: not done
+**Status**: done for the voice side (2026-11-20). Downstream retests are open; see below.
 **Description**: Run the new VM node with the spike's `robot_mic_pub.py` (wake word `hey_jarvis`), plus dome_control and dome_mission. Try "go explore", "what do you see?", "turn left", "go to the kitchen", a joke, a general question, and "stop". Also send "give a full update on the robot status" on `/voice/llm_text`.
 
 **Test**: manual. For each request, record the transcript, the intent published (`ros2 topic echo /intent`), and what the robot did.
+
+### Results (2026-11-20)
+
+**Every request came out as the right intent**, in 0.6–1.4 s of LLM time. Every failure was downstream, or was the speaker clash F04 fixes.
+
+| Request | Heard / intent | Result | Cause |
+|---|---|---|---|
+| turn left | `turn_left` | turned | |
+| turn right | `turn_right` | didn't turn | dome_control: `angular_speed` 1.5 was outside `angular_min` -1.0 |
+| what can you do | chat | correct list | |
+| move forward | no tool | explained what it can do | no forward intent exists |
+| describe | `describe_scene` | silent | `/describe_scene` had no server: dome_semantic not running |
+| status | `get_status` | spoke | thin: speeds only |
+| explore | `exploration_start` | nothing | dome_mission not running |
+| go to the kitchen | `navigation_go` (label `kitchen`) | nothing | dome_mission not running; "kitchen" isn't a confirmed semantic target (F09) |
+| wake during a reply | n/a | `robot_mic_pub.py` crashed | wake beep's `aplay` got "Device or resource busy" while speech played (F04) |
+
+### Findings
+
+- **Fixed outside this repo:** `angular_speed` set to 1.0 in `~/.dome/config/control.yaml` and in dome_control's `config/control-config.yaml` (not committed there), so both turn directions are inside the limits.
+- **dome_control stays silent when `/describe_scene` has no server.** Since Claude is told to let the robot answer, the user hears nothing. dome_control should time out and say so.
+- **The spike relays empty replies** to `/announcement`. T03 skips them.
+
+### Retests still open
+
+- Turn right, after a control restart.
+- Describe, with dome_semantic running (`--options "d c vi se"`).
+- Explore and go-to, with `bl dome_mission mission_explore.launch.py`, going to a detected object rather than a room.
+- "Stop" while moving.
+- The status question sent on `/voice/llm_text`.
 
 ## T03 — `voice_input` listens for both wake words
 **Status**: not done
