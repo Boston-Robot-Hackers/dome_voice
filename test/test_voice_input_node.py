@@ -138,3 +138,56 @@ def test_on_speaking_stores_latest_value():
     assert node.is_speaking is True
     VoiceInputNode.on_speaking(node, Bool(data=False))
     assert node.is_speaking is False
+
+
+def llm_node():
+    _, node = _make_voice_node()
+    node.utterance_pub = MagicMock()
+    node.announce_pub = MagicMock()
+    node.play_beep = MagicMock()
+    return node
+
+
+def test_llm_reply_is_announced():
+    from std_msgs.msg import String
+
+    from dome_voice.voice_input_node import VoiceInputNode
+
+    node = llm_node()
+    VoiceInputNode.on_llm_reply(node, String(data="Hello there."))
+    msg = node.announce_pub.publish.call_args[0][0]
+    assert (msg.text, msg.source) == ("Hello there.", "llm")
+
+
+def test_empty_llm_reply_is_not_announced():
+    from std_msgs.msg import String
+
+    from dome_voice.voice_input_node import VoiceInputNode
+
+    node = llm_node()
+    VoiceInputNode.on_llm_reply(node, String(data=""))
+    node.announce_pub.publish.assert_not_called()
+
+
+def test_utterance_is_published_as_pcm_bytes():
+    import numpy as np
+
+    from dome_voice.utterance_capture import VoiceUtterance
+    from dome_voice.voice_input_node import VoiceInputNode
+
+    node = llm_node()
+    pcm = np.array([1, -2, 300], dtype=np.int16)
+    VoiceInputNode.process_utterance(node, VoiceUtterance(True, pcm, {}), 0)
+    msg = node.utterance_pub.publish.call_args[0][0]
+    assert bytes(msg.data) == pcm.tobytes()
+    node.play_beep.assert_not_called()
+
+
+def test_utterance_without_speech_beeps_fail_and_publishes_nothing():
+    from dome_voice.utterance_capture import VoiceUtterance
+    from dome_voice.voice_input_node import VoiceInputNode
+
+    node = llm_node()
+    VoiceInputNode.process_utterance(node, VoiceUtterance(True, None, {}), 0)
+    node.utterance_pub.publish.assert_not_called()
+    node.play_beep.assert_called_once_with("fail", 0)

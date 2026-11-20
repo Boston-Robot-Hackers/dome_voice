@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import yaml
@@ -121,6 +121,7 @@ class VoiceConfigFile(StrictModel):
 
     capture_card: int = 0
     playback_card: int = 0
+    command_path: Literal["grammar", "llm"] = "grammar"
     stream_settings: StreamSettings = Field(default_factory=StreamSettings)
     sox_chain: SoxChain = Field(default_factory=SoxChain)
     beep: BeepSettings = Field(default_factory=BeepSettings)
@@ -132,6 +133,7 @@ class VoiceConfigFile(StrictModel):
             source_path=source_path,
             capture_card=self.capture_card,
             playback_card=self.playback_card,
+            command_path=self.command_path,
             **self.stream_settings.model_dump(),
             **self.sox_chain.model_dump(),
             **beeps,
@@ -149,6 +151,7 @@ class VoiceRuntimeConfig:
     source_path: str
     capture_card: int
     playback_card: int
+    command_path: str  # "grammar": Vosk and the command table; "llm": PCM to the VM
     wake_word: str
     threshold: float
     wake_hits: int
@@ -283,19 +286,7 @@ class VoiceRuntime:
         on_wake: Callable[[dict[str, Any]], None] | None = None,
         is_muted_fn: Callable[[], bool] = lambda: False,
     ) -> VoiceTurn:
-        self._ensure_ready()
-        wake = wait_for_wake(
-            self.stream,
-            self.wake_model,
-            self.wake_key,
-            self.config,
-            live_filter=self.live_filter,
-            ok_fn=ok_fn,
-            timeout_s=wake_timeout_s,
-            time_fn=self.time_fn,
-            cooldown_s=self.config.wake_cooldown_secs,
-            is_muted_fn=is_muted_fn,
-        )
+        wake = self.wake_up(ok_fn, wake_timeout_s, is_muted_fn)
         if not wake["wake_hit"]:
             return VoiceTurn(
                 wake_score=wake["score"],
@@ -331,6 +322,27 @@ class VoiceRuntime:
             self.recorder.write_turn(heard_summary(turn, self.config))
         return turn
 
+    def wake_up(
+        self,
+        ok_fn: Callable[[], bool],
+        timeout_s: float | None,
+        is_muted_fn: Callable[[], bool],
+    ) -> dict[str, Any]:
+        """Open the mic and models if needed, then wait for the wake word."""
+        self._ensure_ready()
+        return wait_for_wake(
+            self.stream,
+            self.wake_model,
+            self.wake_key,
+            self.config,
+            live_filter=self.live_filter,
+            ok_fn=ok_fn,
+            timeout_s=timeout_s,
+            time_fn=self.time_fn,
+            cooldown_s=self.config.wake_cooldown_secs,
+            is_muted_fn=is_muted_fn,
+        )
+
     def close(self) -> None:
         if self._arecord_process is not None:
             _terminate_process(self._arecord_process)
@@ -352,6 +364,8 @@ class VoiceRuntime:
             self.stream = self.recorder
         if self.wake_model is None or not self.wake_key:
             self.wake_model, self.wake_key = load_wake_model(self.config.wake_word)
+        if self.config.command_path == "llm":
+            return  # the VM transcribes; Vosk is never used
         if self.vosk_module is None or self.stt_model is None:
             self.vosk_module, self.stt_model = load_stt_model(self.config.vosk_model)
 
@@ -621,6 +635,11 @@ def wait_for_wake(
     return wake_result(False, 0.0, chunks, time_fn() - start, scores, noise_window)
 
 
+def secs_to_chunks(secs: float) -> int:
+    """Whole CHUNKs covering `secs` of audio, at least one."""
+    return max(1, math.ceil(secs * RATE / CHUNK))
+
+
 def capture_command(
     stream,
     vosk_module,
@@ -644,10 +663,10 @@ def capture_command(
         rec = vosk_module.KaldiRecognizer(stt_model, RATE)
     rec.SetWords(True)
 
-    silence_limit_chunks = max(1, math.ceil(config.silence_secs * RATE / CHUNK))
-    min_cmd_chunks = max(1, math.ceil(config.min_command_secs * RATE / CHUNK))
-    start_limit_chunks = max(1, math.ceil(config.command_start_secs * RATE / CHUNK))
-    max_cmd_chunks = max(1, math.ceil(config.max_command_secs * RATE / CHUNK))
+    silence_limit_chunks = secs_to_chunks(config.silence_secs)
+    min_cmd_chunks = secs_to_chunks(config.min_command_secs)
+    start_limit_chunks = secs_to_chunks(config.command_start_secs)
+    max_cmd_chunks = secs_to_chunks(config.max_command_secs)
 
     silence_chunks = 0
     speech_chunks = 0

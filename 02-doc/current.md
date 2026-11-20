@@ -23,7 +23,8 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - **F14** adds a second wake word ("hey robbie"; `hey_jarvis` for now) whose turns go to Whisper and Claude on the VM. Claude emits `/intent` through tools, or answers. "hey marvin" and the grammar stay.
 - **T01 and T02 are done** (2026-11-20): every spoken request became the right intent. The failures were downstream (dome_semantic and dome_mission not running, a turn-speed limit in dome_control, now fixed), plus a speaker clash F04 fixes. Results are in TF14 T02.
 - **F04 is done** (2026-11-20): `speech_output` publishes `/voice/speaking`, and `voice_input` and the spike's `robot_mic_pub.py` ignore the wake word while it is true. Checked on the robot.
-- **Next:** TF14 T03, `voice_input` listens for both wake words.
+- **T03 is done** (2026-11-20): `command_path: llm` in `voice.yaml` puts `voice_input` on the LLM path with `hey_jarvis`; `hey_marvin` and the grammar are off but kept. The spike's `robot_mic_pub.py` is retired. Checked on the robot.
+- **Next:** T04 (say "offline" when the VM doesn't answer). **Later, T06:** measure question-end to answer-start, broken down by stage.
 
 ### Done: F13 (speech settings in voice.yaml)
 

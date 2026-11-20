@@ -1,32 +1,31 @@
-# LLM loop spike (F12), and the VM side of F14
+# The LLM command path (F14): setup and running
 
-**The VM node is no longer in this directory.** F14 moved it into the package, as `dome_voice/llm_node.py` (with `dome_voice/llm_turn.py`). It runs from the repo root with `python3 -m dome_voice.llm_node`. The robot side here (`robot_mic_pub.py`) stays until F14 T03 replaces it.
+Spoken request on the robot → transcribed and answered on the VM → an `/intent`, a spoken reply, or both.
 
-Spoken question on the robot → transcribed and answered on the VM → spoken by the robot.
+This directory began as the F12 spike. **The code now lives in the package**; only `publish_wav.py`, a test tool, is left here.
 
 ## How it fits together
 
 ```
-robot  robot_mic_pub.py   mic → wake word → capture → /voice/utterance (UInt8MultiArray, 16 kHz int16 PCM)
-VM     llm_node           /voice/utterance or /voice/llm_text → faster-whisper → Claude → /intent, /voice/llm_reply (String)
-robot  robot_mic_pub.py   /voice/llm_reply → /announcement (dome_control Announcement)
-robot  speech_output      /announcement → Piper → speaker
+robot  voice_input    mic → "hey jarvis" → capture → /voice/utterance (UInt8MultiArray, 16 kHz int16 PCM)
+VM     llm_node       /voice/utterance or /voice/llm_text → faster-whisper → Claude → /intent, /voice/llm_reply (String)
+robot  voice_input    /voice/llm_reply → /announcement (dome_control Announcement)
+robot  speech_output  /announcement → Piper → speaker, with /voice/speaking around it
 ```
 
-**The VM needs only stock ROS 2.** The robot script does the relay to `/announcement`, so `dome_control` stays on the robot.
+- **`command_path: llm`** in `config/voice.yaml` puts `voice_input` on this path, with `wake_word: hey_jarvis`. `command_path: grammar` with `hey_marvin` brings back the fixed grammar.
+- **The VM needs only stock ROS 2.** `voice_input` does the relay to `/announcement`, so `dome_control` stays on the robot.
 
 ## Files
 
-All in `/home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/`, which is the same path on the robot and the VM:
-
-- `robot_mic_pub.py`: the robot side (mic and relay).
-- `spike_capture.py`: captures until silence; used by `robot_mic_pub.py`.
-- `publish_wav.py`: publishes a recorded WAV on `/voice/utterance`, to test the VM without the mic.
-- `test_spike_capture.py`: unit tests.
+- `dome_voice/voice_input_node.py` and `dome_voice/utterance_capture.py`: the robot side.
+- `dome_voice/llm_node.py` and `dome_voice/llm_turn.py`: the VM side.
+- `config/llm_persona.md`: who the robot is, for the system prompt.
+- `spikes/llm_loop/publish_wav.py`: publishes a recorded WAV on `/voice/utterance`, to test the VM without the mic.
 
 ## One-time VM setup
 
-**1. The network.** The VM must see the robot's DDS traffic. That means **bridged networking, not NAT**, and the same `ROS_DOMAIN_ID` on both machines. The robot leaves it unset, which means 0. Check from the VM, while `robot_mic_pub.py` runs on the robot:
+**1. The network.** The VM must see the robot's DDS traffic. That means **bridged networking, not NAT**, and the same `ROS_DOMAIN_ID` on both machines. The robot leaves it unset, which means 0. Check from the VM, while `voice_input` runs on the robot:
 
 ```bash
 ros2 topic list | grep /voice/utterance
@@ -59,16 +58,6 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ## Each run
 
-**Robot, terminal A: speech output.** Stop `robot.launch.py` first if it is running. This starts `speech_output` alone, with the same installed `voice.yaml` the launch gives it. The volume is `speech: gain:` in that file (F13):
-
-```bash
-source /home/pitosalas/ros2_ws/install/setup.bash
-ros2 run dome_voice speech_output --ros-args \
-  -p config:=/home/pitosalas/ros2_ws/install/dome_voice/share/dome_voice/config/voice.yaml
-```
-
-To change the volume, edit `/home/pitosalas/ros2_ws/src/dome_voice/config/voice.yaml`, run `colcon build --packages-select dome_voice` in `/home/pitosalas/ros2_ws`, and restart this node.
-
 **VM: the LLM node.** The first run downloads the Whisper model (about 150 MB):
 
 ```bash
@@ -78,19 +67,28 @@ cd /home/pitosalas/ros2_ws/src/dome_voice && python3 -m dome_voice.llm_node
 
 Wait for `Ready: Whisper 'base.en', Claude 'claude-haiku-5-5'`.
 
-**Robot, terminal B: mic and relay.**
+**Robot: the normal launch, with the `voice` subsystem.** For example, drivers, control, vision, voice and the gamepad:
 
 ```bash
-source /home/pitosalas/ros2_ws/install/setup.bash
-python3 /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/robot_mic_pub.py
+bl dome2 robot.launch.py --options "d c vi vo y"
 ```
+
+For "what do you see?", add `se` (dome_semantic), which also needs a map name: `--map_name <name>`. Saved maps are in `/home/pitosalas/.dome/slam_maps/`.
+
+`voice_input` logs `Voice input ready — llm path, listening for 'hey_jarvis'`.
 
 **Talk.** Say "hey jarvis", wait for the beep, then ask something.
 
-- The spike has its own wake word, so it never answers "hey marvin". `--wake-word` takes an openWakeWord model name or an absolute `.onnx` path; the default `hey_jarvis` stands in until a "hey robbie" model exists.
+- The VM logs `Heard (...)` and `Reply (...)`, with the STT and LLM times and the intents.
+- `voice_input` logs `Sent ... s of audio to the LLM`, then `LLM reply: ...` when there is something to say.
 
-- The VM logs `Heard (...)` and `Reply (...)`, with the STT and LLM times.
-- Robot terminal B logs `Speaking reply: ...`, and the robot speaks.
+**Ask by text**, as a program or a gamepad button would:
+
+```bash
+ros2 topic pub --once /voice/llm_text std_msgs/String "data: 'tell me a robot joke'"
+```
+
+**Volume** is `speech: gain:` in `/home/pitosalas/ros2_ws/src/dome_voice/config/voice.yaml`. The launch reads the installed copy, so run `colcon build --packages-select dome_voice` in `/home/pitosalas/ros2_ws`, then restart.
 
 ## Testing the VM without talking
 
@@ -107,11 +105,11 @@ python3 /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/publish_wav.py \
 They run on the robot and need neither `anthropic` nor `faster-whisper`:
 
 ```bash
-python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/ /home/pitosalas/ros2_ws/src/dome_voice/test/test_llm_turn.py
+python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/test/
 ```
 
 ## Notes
 
-- **The robot scripts use the installed `dome_voice`.** After changing `/home/pitosalas/ros2_ws/src/dome_voice/dome_voice/`, run `colcon build --packages-select dome_voice` in `/home/pitosalas/ros2_ws`.
+- **The robot runs the installed `dome_voice`.** After changing `/home/pitosalas/ros2_ws/src/dome_voice/dome_voice/`, run `colcon build --packages-select dome_voice` in `/home/pitosalas/ros2_ws`.
 - **Options:** `llm_node --whisper-model small.en` is slower but more accurate. `--model <id>` picks another Claude model. `--persona FILE` picks the persona (default `config/llm_persona.md`).
 - **Each reply is billed** to the API key's account.

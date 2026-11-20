@@ -1,37 +1,49 @@
 #!/usr/bin/env python3
 """
-spike_capture.py — capture one open-ended utterance as raw PCM, no STT (F12 spike).
+utterance_capture.py — the LLM path's turn: wake word, then the utterance as raw PCM, no STT.
 
 Author: Pito Salas and Claude Code
 Open Source Under MIT license
 
-After a wake hit, read mono chunks until the speaker stops, using the same
-start/silence rules as `runtime.capture_command`, and return the audio itself
-instead of a transcript. The audio gets `stt_gain_db`, since the mic is
-quiet (I02) and whatever transcribes it downstream needs the same boost.
+After a wake, `capture_utterance` reads mono chunks until the speaker stops,
+using the same start and silence rules as `runtime.capture_command`, and
+returns the audio itself instead of a transcript. The audio gets
+`stt_gain_db`, since the mic is quiet (I02) and whatever transcribes it
+downstream (Whisper on the VM) needs the same boost.
+
+`next_utterance` composes the two steps for one turn. It lives here, not on
+`VoiceRuntime`, so `runtime.py` needn't import this module.
 """
 
 import collections
-import math
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
 from dome_voice.runtime import (
     CHUNK,
-    RATE,
     LiveBandpass,
+    VoiceRuntime,
     VoiceRuntimeConfig,
     apply_gain,
     noise_floor,
     read_mono_chunk,
     rms_dbfs,
+    secs_to_chunks,
     silence_cutoff,
     wake_skip_chunks,
 )
 
 
-def secs_to_chunks(secs: float) -> int:
-    return max(1, math.ceil(secs * RATE / CHUNK))
+@dataclass(frozen=True)
+class VoiceUtterance:
+    """One LLM-path turn. `pcm` is None when the wake fired but no one spoke."""
+
+    is_woken: bool
+    pcm: np.ndarray | None
+    wake: dict[str, Any]
 
 
 def capture_utterance(
@@ -80,3 +92,20 @@ def capture_utterance(
     if not is_started:
         return None
     return apply_gain(np.concatenate(chunks), config.stt_gain_db)
+
+
+def next_utterance(
+    runtime: VoiceRuntime,
+    ok_fn: Callable[[], bool],
+    on_wake: Callable[[dict[str, Any]], None],
+    is_muted_fn: Callable[[], bool],
+) -> VoiceUtterance:
+    """Wait for the wake word, call `on_wake` (the beep), then capture."""
+    wake = runtime.wake_up(ok_fn, None, is_muted_fn)
+    if not wake["wake_hit"]:
+        return VoiceUtterance(False, None, wake)
+    on_wake(wake)
+    pcm = capture_utterance(
+        runtime.stream, runtime.config, runtime.live_filter, wake["noise_window"]
+    )
+    return VoiceUtterance(True, pcm, wake)

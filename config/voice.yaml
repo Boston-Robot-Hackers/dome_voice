@@ -11,9 +11,11 @@
 
 capture_card: 0                 # ALSA card for arecord (hw:<card>,0)
 playback_card: 0
+command_path: llm               # after the wake word: "llm" sends the audio to the VM (F14);
+                                # "grammar" uses Vosk and the command table (wake_word hey_marvin)
 
 stream_settings:
-  wake_word: hey_marvin         # openWakeWord model name, or an absolute .onnx path
+  wake_word: hey_jarvis         # openWakeWord model name, or an absolute .onnx path
   threshold: 0.3                # min wake score per 80 ms chunk (0.0–1.0); raise if false triggers
   wake_hits: 1                  # consecutive chunks above threshold; raise to resist noise spikes
                                 # (the old in-code table had 0.7 and 3, tuned for "alexa")

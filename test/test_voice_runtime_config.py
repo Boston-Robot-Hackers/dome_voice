@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # test_voice_runtime_config — voice config: defaults, YAML layering, overrides
 # Author: Pito Salas and Claude Code
-# Version: 4
+# Version: 5
 # Created: 2026-11-19
 # Updated: 2026-11-20
 # Open Source Under MIT license
@@ -214,3 +214,17 @@ def test_speech_does_not_change_the_voice_input_config(tmp_path):
 def test_robot_yaml_speech_section_is_valid():
     """The robot's speech settings load; their values are tuning, not tested."""
     load_speech_settings(ROBOT_YAML)
+
+
+def test_command_path_defaults_to_grammar(tmp_path):
+    assert load_voice_runtime_config(write_yaml(tmp_path, "")).command_path == "grammar"
+
+
+def test_command_path_llm_loads(tmp_path):
+    path = write_yaml(tmp_path, "command_path: llm\n")
+    assert load_voice_runtime_config(path).command_path == "llm"
+
+
+def test_command_path_rejects_other_values(tmp_path):
+    with pytest.raises(ValidationError):
+        load_voice_runtime_config(write_yaml(tmp_path, "command_path: both\n"))

@@ -62,20 +62,23 @@ Manual check: `ros2 topic pub --once /voice/llm_text std_msgs/String "data: 'tel
 - "Stop" while moving.
 - The status question sent on `/voice/llm_text`.
 
-## T03 — `voice_input` listens for both wake words
-**Status**: not done
+## T03 — `voice_input` runs the LLM path, chosen in `voice.yaml`
+**Status**: done (2026-11-20): on the robot, `robot.launch.py` alone ran the LLM path with "hey jarvis"; "hey marvin" did nothing. Leftover spike processes holding the mic and a second `speech_output` caused `Broken pipe` until stopped.
 **Description**:
-- **Config:** add `llm_wake_word` (default `none`) and `llm_timeout_secs` to `voice.yaml` and `VoiceConfigFile`.
-- **Wake models:** `load_wake_model` loads both models into one openWakeWord instance, and `wait_for_wake` reports which one fired.
-- **Routing:** a turn on the LLM wake word is captured with the spike's capture rules (moved into the runtime) and published on `/voice/utterance`, skipping Vosk.
-- **Relay:** `voice_input` relays `/voice/llm_reply` to `/announcement`, and skips empty replies.
-- **Retire the spike's robot script.**
+- **Config:** `command_path: grammar | llm` at the top of `voice.yaml` (default `grammar`). The robot's YAML sets `llm` and `wake_word: hey_jarvis`.
+- **Capture:** the spike's capture-until-silence moves into a new ROS-free module, `dome_voice/utterance_capture.py`, because `runtime.py` is already long. `secs_to_chunks` goes into `runtime.py`, and `capture_command` uses it too.
+- **Runtime:** `VoiceRuntime.wake_up` is the wake step, shared by `next_turn` and by `next_utterance` in `utterance_capture.py`, which returns the captured PCM. Vosk isn't loaded on the `llm` path.
+- **Node:** on the `llm` path, `voice_input`:
+  - publishes the PCM on `/voice/utterance`;
+  - relays each non-empty `/voice/llm_reply` to `/announcement`;
+  - beeps on wake, and on no speech, as the grammar path does.
+- **Retire the spike's `robot_mic_pub.py` and `spike_capture.py`.** Their tests move to `test/`. `publish_wav.py` stays as a test tool.
 
 **Test**:
-- the YAML loads with the key unset and with it set;
-- the right wake key is reported when either model fires (fake model);
-- an LLM turn is published and doesn't reach Vosk;
-- an empty reply isn't announced.
+- `command_path` loads, defaults to `grammar`, and rejects other values;
+- the capture tests, moved from the spike;
+- `next_utterance` returns PCM after a wake, and never loads Vosk;
+- the node publishes the utterance and skips empty replies.
 
 ## T04 — Offline: say so instead of going quiet
 **Status**: not done
@@ -85,14 +88,14 @@ Manual check: `ros2 topic pub --once /voice/llm_text std_msgs/String "data: 'tel
 
 ## T05 — Train a "hey robbie" wake model
 **Status**: not done
-**Description**: openWakeWord ships no "hey robbie" model. Train one with its training notebook (synthetic Piper clips, on a free Colab GPU). Put the `.onnx` on the robot, and set its absolute path as `llm_wake_word`.
+**Description**: openWakeWord ships no "hey robbie" model. Train one with its training notebook (synthetic Piper clips, on a free Colab GPU). Put the `.onnx` on the robot, and set its absolute path as `wake_word`.
 
 **Test**: manual. Record the hit rate on "hey robbie", and false wakes on ordinary talk and on "hey marvin", next to `hey_jarvis` under the same conditions.
 
 ## T06 — Tests and measurements
 **Status**: not done
 **Description**: Fill the test gaps T01–T04 left, then run F14's demo on the robot with the motors running.
-- Measure the latency end to end, from end of speech to first word.
+- **Measure the latency end to end, from the end of the spoken question to the first spoken word of the answer.** Break it into the silence cutoff, transfer, Whisper, Claude, and Piper's start, so the largest part is known before tuning any of it.
 - Check self-hearing with long replies.
 - Check that "hey marvin" turns are unaffected.
 

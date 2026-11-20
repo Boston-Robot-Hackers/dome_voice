@@ -30,8 +30,8 @@ any node: /voice/llm_text (String) → VM llm node, skipping Whisper    (e.g. a 
 
 ## Decisions
 
-- **One mic process, two wake words.** The mic opens only once, so `voice_input` listens for both. openWakeWord scores several models in one pass, and the one that fires picks the path.
-- **The LLM path is off unless `voice.yaml` names `llm_wake_word`.** With it set to `none`, `voice_input` behaves exactly as today.
+- **One command path at a time, chosen in `voice.yaml`** (decided 2026-11-20). `command_path: llm` with `wake_word: hey_jarvis` is the robot's setting for now. `command_path: grammar` with `hey_marvin` brings back the fixed grammar, whose code stays.
+- **Both paths at once is deferred.** It would mean scoring two wake models in one pass and routing on whichever fires.
 - **Claude gets the `/intent` contract as tools**, one tool per intent the consumers handle:
   - dome_control: `stop`, `turn_left`, `turn_right`, `describe_scene`, `list_objects`, `get_status`.
   - dome_mission: `exploration_start`, `exploration_stop`, `navigation_go` (slot `label`), `navigation_cancel`.
@@ -62,14 +62,14 @@ any node: /voice/llm_text (String) → VM llm node, skipping Whisper    (e.g. a 
 - **Echo cancellation and barge-in** (F08).
 
 ## How to Demo
-**Setup**: On the robot, `robot.launch.py` with `llm_wake_word` set in `voice.yaml`, plus dome_control and dome_mission. On the VM, the LLM node with `ANTHROPIC_API_KEY` set.
+**Setup**: On the robot, `robot.launch.py` with `command_path: llm` in `voice.yaml`, plus dome_control and dome_mission. On the VM, the LLM node with `ANTHROPIC_API_KEY` set.
 
 **Steps**:
 1. Say "hey jarvis, go explore the room".
 2. Say "hey jarvis, what do you see?".
 3. Say "hey jarvis, tell me a joke".
 4. `ros2 topic pub --once /voice/llm_text std_msgs/String "data: 'tell me a robot joke'"`.
-5. Say "hey marvin explore".
+5. With `command_path: grammar` and `wake_word: hey_marvin`, say "hey marvin explore".
 6. Stop the VM node and say "hey jarvis, turn left".
 
 **Expected output**:
