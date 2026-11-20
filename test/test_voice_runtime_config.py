@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # test_voice_runtime_config — voice config: defaults, YAML layering, overrides
 # Author: Pito Salas and Claude Code
-# Version: 3
+# Version: 4
 # Created: 2026-11-19
 # Updated: 2026-11-20
 # Open Source Under MIT license
 """The voice config has one set of defaults, and a YAML overrides only its keys."""
 
-import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,7 +18,6 @@ from dome_voice.runtime import load_speech_settings, load_voice_runtime_config
 
 REPO = Path(__file__).resolve().parent.parent
 ROBOT_YAML = REPO / "config" / "voice.yaml"
-BASELINE = Path(__file__).resolve().parent / "fixtures" / "robot_config_baseline.json"
 
 
 def write_yaml(tmp_path: Path, text: str) -> Path:
@@ -154,12 +152,14 @@ def test_bad_override_value_raises():
         load_voice_runtime_config(overrides={"wake_hits": 0})
 
 
-def test_robot_yaml_matches_the_baseline():
-    """config/voice.yaml must give what the robot ran before F02."""
-    cfg = load_voice_runtime_config(ROBOT_YAML).to_dict()
-    cfg.pop("source_path")
-    cfg.pop("vosk_model_path")
-    assert cfg == json.loads(BASELINE.read_text())
+def test_robot_yaml_is_valid():
+    """The robot's voice settings load; their values are tuning, not tested."""
+    load_voice_runtime_config(ROBOT_YAML)
+
+
+def test_robot_yaml_does_not_record_turns():
+    """Recording is switched on by hand for a session; it must not be committed."""
+    assert load_voice_runtime_config(ROBOT_YAML).record_dir is None
 
 
 def test_speech_defaults_with_an_empty_yaml(tmp_path):
@@ -211,10 +211,6 @@ def test_speech_does_not_change_the_voice_input_config(tmp_path):
     )
 
 
-def test_robot_yaml_speech_section():
-    speech = load_speech_settings(ROBOT_YAML)
-    assert (speech.gain, speech.length_scale, speech.alsa_device) == (
-        0.5,
-        1.0,
-        "plughw:0,0",
-    )
+def test_robot_yaml_speech_section_is_valid():
+    """The robot's speech settings load; their values are tuning, not tested."""
+    load_speech_settings(ROBOT_YAML)

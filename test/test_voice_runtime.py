@@ -301,3 +301,108 @@ def test_wake_beep_does_not_start_the_command():
 
     assert result["command_started"] is False
     assert all(np.all(chunk == 0) for chunk in vosk.recognizer.received)
+
+
+class CountingWakeModel:
+    """Scores every chunk high, and counts how many chunks it was given."""
+
+    def __init__(self):
+        self.predictions = 0
+
+    def predict(self, _chunk):
+        self.predictions += 1
+        return {"alexa": 0.9}
+
+
+def ticking_clock(step_s: float = 1.0):
+    ticks = iter(range(1_000_000))
+    return lambda: next(ticks) * step_s
+
+
+def mute_sequence(*states: bool):
+    remaining = list(states)
+    return lambda: remaining.pop(0) if remaining else False
+
+
+def test_wait_for_wake_ignores_audio_while_muted():
+    cfg = replace(load_voice_runtime_config(), threshold=0.3, wake_hits=1)
+    model = CountingWakeModel()
+    wake = wait_for_wake(
+        FakeStream([stereo_chunk(20)] * 3),
+        model,
+        "alexa",
+        cfg,
+        time_fn=lambda: 0.0,
+        is_muted_fn=lambda: True,
+    )
+    assert wake["wake_hit"] is False
+    assert wake["chunks"] == 3
+    assert model.predictions == 0
+
+
+def test_wait_for_wake_fires_after_unmute():
+    cfg = replace(load_voice_runtime_config(), threshold=0.3, wake_hits=1)
+    model = CountingWakeModel()
+    wake = wait_for_wake(
+        FakeStream([stereo_chunk(20)] * 10),
+        model,
+        "alexa",
+        cfg,
+        time_fn=lambda: 0.0,
+        is_muted_fn=mute_sequence(True, True),
+    )
+    # 2 muted chunks, 1 that ends the (zero-length) cooldown, 1 scored.
+    assert wake["wake_hit"] is True
+    assert wake["chunks"] == 4
+    assert model.predictions == 1
+
+
+def test_wait_for_wake_drains_cooldown_after_unmute():
+    cfg = replace(load_voice_runtime_config(), threshold=0.3, wake_hits=1)
+    model = CountingWakeModel()
+    wake = wait_for_wake(
+        FakeStream([stereo_chunk(20)] * 20),
+        model,
+        "alexa",
+        cfg,
+        time_fn=ticking_clock(),
+        cooldown_s=2.0,
+        is_muted_fn=mute_sequence(True, True),
+    )
+    # With the clock ticking 1 s per call, each 2 s drain scores one chunk and
+    # ignores it; only the chunk after the unmute drain can fire.
+    assert wake["wake_hit"] is True
+    assert wake["chunks"] == 4
+    assert model.predictions == 3
+
+
+def test_wait_for_wake_stream_end_while_muted_returns_no_wake():
+    cfg = replace(load_voice_runtime_config(), threshold=0.3, wake_hits=1)
+    wake = wait_for_wake(
+        FakeStream([stereo_chunk(20)] * 2),
+        CountingWakeModel(),
+        "alexa",
+        cfg,
+        time_fn=lambda: 0.0,
+        is_muted_fn=lambda: True,
+    )
+    assert wake["wake_hit"] is False
+
+
+def test_voice_runtime_next_turn_passes_mute_through():
+    cfg = replace(
+        load_voice_runtime_config(), threshold=0.3, wake_hits=1, wake_cooldown_secs=0.0
+    )
+    model = CountingWakeModel()
+    runtime = VoiceRuntime(
+        cfg,
+        stream=FakeStream([stereo_chunk(20)] * 3),
+        wake_model=model,
+        wake_key="alexa",
+        vosk_module=FakeVosk(""),
+        stt_model=object(),
+        time_fn=lambda: 0.0,
+    )
+    turn = runtime.next_turn(is_muted_fn=lambda: True)
+    assert turn.empty is True
+    assert model.predictions == 0

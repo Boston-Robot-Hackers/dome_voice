@@ -126,3 +126,15 @@ def test_empty_config_parameter_is_an_error(monkeypatch, tmp_path):
     monkeypatch.setenv("DOME_VOICE_CONFIG", str(tmp_path / "ignored.yaml"))
     with pytest.raises(RuntimeError):
         node_with_config_param("").config_path()
+
+
+def test_on_speaking_stores_latest_value():
+    _, node = _make_voice_node()
+    from std_msgs.msg import Bool
+
+    from dome_voice.voice_input_node import VoiceInputNode
+
+    VoiceInputNode.on_speaking(node, Bool(data=True))
+    assert node.is_speaking is True
+    VoiceInputNode.on_speaking(node, Bool(data=False))
+    assert node.is_speaking is False

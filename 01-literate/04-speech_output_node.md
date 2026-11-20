@@ -1,5 +1,5 @@
 ---
-version: "2.2"
+version: "2.3"
 generated: "2026-11-20"
 ---
 
@@ -21,6 +21,8 @@ flowchart LR
 ```
 
 The key property is that **audio flows as soon as Piper produces it**. The robot starts speaking after the first sentence is synthesized, not after the whole reply.
+
+Around each announcement it also publishes **`/voice/speaking`** (`std_msgs/Bool`), so listeners can stop listening while the robot talks (next to last section).
 
 ## The announcement contract
 
@@ -146,15 +148,22 @@ finally:
 
 The `finally` covers the early-failure case. If aplay dies mid-stream, for example because the device is busy, the next write raises `BrokenPipeError`, and Piper would otherwise be left running. **Both processes are always reaped**, so a failed announcement leaves no stray processes behind.
 
-## Failure handling
+## Failure handling, and the speaking flag
 
 ```python
+self.speaking_pub.publish(Bool(data=True))
 try:
     self.speak_text(announcement.text)
     ...
 except (RuntimeError, ValueError, OSError) as exc:
     self.get_logger().error(f"Speech output failed: {exc}")
+finally:
+    self.speaking_pub.publish(Bool(data=False))
 ```
+
+**`/voice/speaking` brackets the speech.** `True` goes out before Piper starts, and `False` comes out of a `finally`, so a failed announcement can never leave listeners muted forever. Empty announcements return before this point and publish nothing.
+
+The listeners (`voice_input`, and the F14 spike's mic script) ignore their wake word while the flag is true. That is *half-duplex*: the cheap software answer to a mic with no echo cancellation.
 
 **One failed announcement must not kill the node**, so these errors are logged and the node carries on.
 
@@ -174,4 +183,5 @@ A programming error, such as a `TypeError`, still surfaces instead of being logg
 1. **Piper still starts per announcement.** About 1 s of the 1.3 s before the first word is Piper loading its model. A long-lived Piper process fed one line per announcement would remove that, but the node would then need a way to find where each utterance's raw audio ends, since the stream has no markers.
 2. **Speech blocks the callback.** `speak_text` runs inside the subscription callback. With the default single-threaded executor, announcements arriving during speech queue up in the 10-deep subscription buffer, and anything beyond that is dropped.
 3. **Priority is ignored.** The contract supports priorities and dedup keys, and dome_control's features F08 to F10 (priority queue, barge-in, dedup) plan to use them. Until then, the order is first-come, first-served.
-4. **Speech and beeps can collide.** Speech plays on `plughw:0,0`, which takes the device exclusively, while beeps use ALSA's default. A beep during an announcement can fail with *Device or resource busy*.
+4. **Speech and beeps can still collide, but rarely.** Speech takes the card exclusively. `/voice/speaking` stops listeners from waking, and so beeping, during speech; an announcement that starts in the instant right after a wake can still meet the wake beep.
+5. **The flag uses default QoS.** A listener that starts mid-sentence misses the `True` and assumes silence until the next announcement. A *transient local* (latched) publisher would give late joiners the current state.

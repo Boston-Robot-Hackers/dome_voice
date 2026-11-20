@@ -34,7 +34,7 @@ sox_chain:                      # bandpass cutoffs in Hz; none turns a side off
   lowpass: 4000
 
 speech:                         # speech_output (F13); Piper's paths stay in the environment
-  gain: 0.5                     # volume, 0–1: Piper peaks at full scale, so above 1.0 clips
+  gain: 1.0                     # volume, 0–1: Piper peaks at full scale, so above 1.0 clips
   length_scale: 1.0             # tempo; above 1.0 speaks slower
   alsa_device: plughw:0,0       # playback device; "" = ALSA's default
 

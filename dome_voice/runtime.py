@@ -281,6 +281,7 @@ class VoiceRuntime:
         ok_fn: Callable[[], bool] = lambda: True,
         wake_timeout_s: float | None = None,
         on_wake: Callable[[dict[str, Any]], None] | None = None,
+        is_muted_fn: Callable[[], bool] = lambda: False,
     ) -> VoiceTurn:
         self._ensure_ready()
         wake = wait_for_wake(
@@ -293,6 +294,7 @@ class VoiceRuntime:
             timeout_s=wake_timeout_s,
             time_fn=self.time_fn,
             cooldown_s=self.config.wake_cooldown_secs,
+            is_muted_fn=is_muted_fn,
         )
         if not wake["wake_hit"]:
             return VoiceTurn(
@@ -512,6 +514,47 @@ def open_arecord(card: int) -> subprocess.Popen:
     )
 
 
+def drain_mic(
+    stream,
+    wake_model,
+    live_filter: LiveBandpass | None,
+    ok_fn: Callable[[], bool],
+    time_fn: Callable[[], float],
+    seconds: float,
+) -> bool:
+    """Read and score `seconds` of audio, ignoring wakes; False if the stream ended.
+
+    Flushes both stale buffered audio and the wake model's sliding window, so
+    residual activations (from the last wake, or the robot's own voice) can't
+    re-trigger.
+    """
+    drain_end = time_fn() + seconds
+    while ok_fn() and time_fn() < drain_end:
+        chunk = read_mono_chunk(stream, CHUNK, live_filter)
+        if chunk is None:
+            return False
+        wake_model.predict(chunk)
+    return True
+
+
+def wake_result(
+    is_hit: bool,
+    score: float,
+    chunks: int,
+    elapsed_s: float,
+    scores: list[float],
+    noise_window: collections.deque,
+) -> dict[str, Any]:
+    return {
+        "wake_hit": is_hit,
+        "score": round(score, 6),
+        "chunks": chunks,
+        "elapsed_ms": round(elapsed_s * 1000),
+        "max_score": round(max(scores), 6) if scores else 0.0,
+        "noise_window": noise_window,
+    }
+
+
 def wait_for_wake(
     stream,
     wake_model,
@@ -522,22 +565,25 @@ def wait_for_wake(
     timeout_s: float | None = None,
     time_fn: Callable[[], float] = time.monotonic,
     cooldown_s: float = 0.0,
+    is_muted_fn: Callable[[], bool] = lambda: False,
 ) -> dict[str, Any]:
-    # Flush pipe AND model sliding window before scoring — prevents both stale
-    # buffered audio and residual OWW activations from the previous "alexa" from
-    # immediately re-triggering after a turn completes.
-    if cooldown_s > 0:
-        drain_end = time_fn() + cooldown_s
-        while ok_fn() and time_fn() < drain_end:
-            chunk = read_mono_chunk(stream, CHUNK, live_filter)
-            if chunk is None:
-                break
-            wake_model.predict(chunk)
+    """Score the mic until the wake word fires, `ok_fn` turns false, or timeout.
+
+    While `is_muted_fn()` is true (the robot is speaking), chunks are read so
+    the pipe never backs up, but are not scored and don't count as room noise.
+    When it turns false, `cooldown_s` of audio is drained before scoring again,
+    the same drain that runs on entry.
+    """
+    if cooldown_s > 0 and not drain_mic(
+        stream, wake_model, live_filter, ok_fn, time_fn, cooldown_s
+    ):
+        return wake_result(False, 0.0, 0, 0.0, [], collections.deque(maxlen=50))
 
     noise_window: collections.deque[float] = collections.deque(maxlen=50)
     scores: list[float] = []
     wake_hits = 0
     chunks = 0
+    was_muted = False
     start = time_fn()
 
     while ok_fn():
@@ -547,36 +593,32 @@ def wait_for_wake(
         if chunk is None:
             break
         chunks += 1
-        chunk_dbfs = rms_dbfs(chunk)
+        if is_muted_fn():
+            was_muted = True
+            wake_hits = 0
+            continue
+        if was_muted:
+            was_muted = False
+            if not drain_mic(
+                stream, wake_model, live_filter, ok_fn, time_fn, cooldown_s
+            ):
+                break
+            continue
         score = float(wake_model.predict(chunk).get(wake_key, 0.0))
         scores.append(score)
 
         if score < config.threshold:
-            noise_window.append(chunk_dbfs)
+            noise_window.append(rms_dbfs(chunk))
             wake_hits = 0
             continue
 
         wake_hits += 1
-        if wake_hits < config.wake_hits:
-            continue
+        if wake_hits >= config.wake_hits:
+            return wake_result(
+                True, score, chunks, time_fn() - start, scores, noise_window
+            )
 
-        return {
-            "wake_hit": True,
-            "score": round(score, 6),
-            "chunks": chunks,
-            "elapsed_ms": round((time_fn() - start) * 1000),
-            "max_score": round(max(scores), 6) if scores else 0.0,
-            "noise_window": noise_window,
-        }
-
-    return {
-        "wake_hit": False,
-        "score": 0.0,
-        "chunks": chunks,
-        "elapsed_ms": round((time_fn() - start) * 1000),
-        "max_score": round(max(scores), 6) if scores else 0.0,
-        "noise_window": noise_window,
-    }
+    return wake_result(False, 0.0, chunks, time_fn() - start, scores, noise_window)
 
 
 def capture_command(

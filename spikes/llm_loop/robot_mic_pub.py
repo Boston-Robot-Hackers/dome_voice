@@ -5,7 +5,8 @@ robot_mic_pub.py — robot side of the F12 spike: mic → /voice/utterance, /voi
 Author: Pito Salas and Claude Code
 Open Source Under MIT license
 
-It listens for its own wake word (`--wake-word`), not the fixed grammar's.
+It listens for its own wake word (`--wake-word`), not the fixed grammar's, and
+ignores it while `speech_output` reports it is speaking (`/voice/speaking`).
 
 Each utterance is published as one `std_msgs/UInt8MultiArray`: int16
 little-endian mono PCM at 16 kHz. The VM node transcribes it and answers on
@@ -33,7 +34,7 @@ from dome_control.msg import Announcement as AnnouncementMsg
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
 from spike_capture import capture_utterance
-from std_msgs.msg import String, UInt8MultiArray
+from std_msgs.msg import Bool, String, UInt8MultiArray
 
 from dome_voice import beep, load_voice_runtime_config
 from dome_voice.runtime import (
@@ -61,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def listen_loop(node: Node, publisher, config) -> None:
+def listen_loop(node: Node, publisher, config, speaking: threading.Event) -> None:
     """Wake, beep, capture, publish — until ROS shuts down or the mic ends."""
     proc = open_arecord(config.capture_card)
     wake_model, wake_key = load_wake_model(config.wake_word)
@@ -78,6 +79,7 @@ def listen_loop(node: Node, publisher, config) -> None:
                 live_filter=live_filter,
                 ok_fn=rclpy.ok,
                 cooldown_s=config.wake_cooldown_secs,
+                is_muted_fn=speaking.is_set,
             )
             if not wake["wake_hit"]:
                 break
@@ -108,6 +110,20 @@ def listen_loop(node: Node, publisher, config) -> None:
     finally:
         proc.terminate()
         proc.wait(timeout=2)
+
+
+def track_speaking(node: Node) -> threading.Event:
+    """An Event that is set while speech_output reports it is speaking."""
+    speaking = threading.Event()
+
+    def on_speaking(msg: Bool) -> None:
+        if msg.data:
+            speaking.set()
+        else:
+            speaking.clear()
+
+    node.create_subscription(Bool, "/voice/speaking", on_speaking, 10)
+    return speaking
 
 
 def relay_replies(node: Node) -> None:
@@ -141,11 +157,12 @@ def main() -> None:
     node = Node("llm_spike_mic")
     publisher = node.create_publisher(UInt8MultiArray, TOPIC, 10)
     relay_replies(node)
+    speaking = track_speaking(node)
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     threading.Thread(target=spin_until_shutdown, args=(executor,), daemon=True).start()
     try:
-        listen_loop(node, publisher, config)
+        listen_loop(node, publisher, config, speaking)
     except KeyboardInterrupt:
         node.get_logger().info("Stopped by Ctrl-C")
     finally:

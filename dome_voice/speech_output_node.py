@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # speech_output_node.py — ROS2 node: subscribe to /announcement and speak via Piper + ALSA
 # Author: Pito Salas and Claude Code
-# Version: 2
+# Version: 3
 # Created: 2026-11-19
 # Updated: 2026-11-20
 # Open Source Under MIT license
@@ -16,6 +16,7 @@ import rclpy
 from dome_control.announcement_contract import Announcement, AnnouncementMsg
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from std_msgs.msg import Bool
 
 from dome_voice.runtime import load_speech_settings
 
@@ -108,6 +109,7 @@ class SpeechOutputNode(Node):
         self.announcement_sub = self.create_subscription(
             AnnouncementMsg, "/announcement", self.on_announcement, 10
         )
+        self.speaking_pub = self.create_publisher(Bool, "/voice/speaking", 10)
         config = self.config_path()
         speech = load_speech_settings(config)
         self.speech_gain = speech.gain
@@ -138,6 +140,9 @@ class SpeechOutputNode(Node):
             self.get_logger().debug("Ignoring empty announcement payload")
             return
 
+        # Listeners mute their wake word while this is true, so the robot
+        # doesn't hear itself and their beeps don't fight speech for the card.
+        self.speaking_pub.publish(Bool(data=True))
         try:
             self.speak_text(announcement.text)
             self.get_logger().info(
@@ -150,6 +155,8 @@ class SpeechOutputNode(Node):
             OSError,
         ) as exc:
             self.get_logger().error(f"Speech output failed: {exc}")
+        finally:
+            self.speaking_pub.publish(Bool(data=False))
 
     def speak_text(self, text: str) -> None:
         stream_speech(

@@ -1,5 +1,5 @@
 ---
-version: "2.4"
+version: "2.5"
 generated: "2026-11-20"
 ---
 
@@ -222,12 +222,47 @@ A chunk is *speech* if it is louder than **floor + 5 dB**. The cutoff is capped 
 
 ### Cooldown first
 
-Before scoring, `wait_for_wake` can **drain the microphone for `wake_cooldown_secs`** (1.5 s), feeding each chunk to the model but ignoring the score.
+Before scoring, `wait_for_wake` can **drain the microphone for `wake_cooldown_secs`** (1.5 s), feeding each chunk to the model but ignoring the score. The drain is its own helper, `drain_mic`, because the mute path below needs it too.
 
 That fixes two different re-trigger problems at once:
 
 - **Stale audio in the pipe.** While the last command was being processed, arecord kept writing. Without draining, the runtime would score audio from seconds ago.
 - **openWakeWord's sliding window.** The model scores over a window of recent frames, so right after a wake it still "remembers" the wake word. Feeding it fresh audio flushes that memory.
+
+### Muting while the robot speaks
+
+The Seeed HAT has no echo cancellation, so the mic hears the speaker. The fix is **half-duplex**: the caller passes `is_muted_fn`, and while it returns true the loop *reads but does not score*.
+
+```python
+if is_muted_fn():
+    was_muted = True
+    wake_hits = 0
+    continue
+if was_muted:
+    was_muted = False
+    if not drain_mic(stream, wake_model, live_filter, ok_fn, time_fn, cooldown_s):
+        break
+    continue
+```
+
+Three choices matter here:
+
+- **Keep reading.** arecord writes whether or not anyone listens. Skipping reads would let the pipe fill with the robot's own voice, to be scored later.
+- **Don't score, and don't count as noise.** The robot's speech is neither a wake candidate nor the room's noise floor; letting it into `noise_window` would raise the silence cutoff for the next command.
+- **Drain on unmute.** The same cooldown as on entry flushes the tail of the speech and the model's window, so the last word spoken can't fire a wake.
+
+The runtime stays ROS-free: the node turns `/voice/speaking` into the callable.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Draining: cooldown_s > 0
+    [*] --> Scoring
+    Draining --> Scoring
+    Scoring --> Muted: is_muted_fn()
+    Muted --> Muted: read, discard
+    Muted --> Draining: unmuted
+    Scoring --> [*]: wake_hits in a row
+```
 
 ### The scoring loop
 
@@ -245,7 +280,7 @@ return {"wake_hit": True, ...}
 
 This is a **debounce**: the score must stay above threshold for `wake_hits` *consecutive* chunks. One noisy chunk resets the count. With the robot's effective `wake_hits = 1`, a single chunk is enough.
 
-The return value is a plain dict, not a dataclass. It carries the score, timing, and **the noise window**, which is how phase 2 receives the room measurement.
+The return value is a plain dict, not a dataclass, built in one place by `wake_result`. It carries the score, timing, and **the noise window**, which is how phase 2 receives the room measurement.
 
 ### How it ends without a wake
 

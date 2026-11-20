@@ -46,7 +46,7 @@ mic (arecord) → mono
 
 ### Listening
 
-- **The robot does not hear itself.** Wake detection is suspended while the robot speaks or beeps, and the mic is drained afterwards. *(planned, F04)*
+- **The robot does not hear itself.** `speech_output` publishes `/voice/speaking` (`std_msgs/Bool`), true while it speaks. Listeners ignore the wake word while it is true, then drain `wake_cooldown_secs` of audio before scoring again. Their own beeps are covered by the same drain (F04).
 - **The wake word is detected continuously in the live stream**, including during a command, with no dead time between turns. A second wake during a turn restarts it. *(planned, F10)*
 - **A command can follow the wake word in one breath.** "hey marvin explore" works as well as "hey marvin … explore" with a pause. The audio from just before wake detection is kept and given to STT, so the start of the command is not lost to the wake detector. *(planned, F10)*
 - **A command ends when the speaker stops talking**, detected by a voice-activity model, not by loudness thresholds. *(planned, F06)*

@@ -4,14 +4,21 @@ voice_input_node.py — ROS2 node: openWakeWord + Vosk STT + intent mapper → /
 
 Author: Pito Salas and Claude Code
 Open Source Under MIT license
+
+The wake/capture loop blocks the main thread, so ROS callbacks (the
+`/voice/speaking` subscription) spin on a daemon thread. While speech_output
+reports it is speaking, the wake word is ignored, so the robot doesn't hear
+itself and its beeps never fight speech for the sound card.
 """
 
 import json
 import os
+import threading
 
 import rclpy
+from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from dome_voice import (
     IntentMapper,
@@ -31,6 +38,11 @@ class VoiceInputNode(Node):
         self.state_pub = self.create_publisher(String, "/voice/state", 10)
         self.intent_mapper = IntentMapper()
         self.voice_config = load_voice_runtime_config(self.config_path())
+        self.is_speaking = False
+        self.create_subscription(Bool, "/voice/speaking", self.on_speaking, 10)
+
+    def on_speaking(self, msg: Bool) -> None:
+        self.is_speaking = msg.data
 
     def config_path(self) -> str:
         """The `config` parameter: the voice YAML, set by robot.launch.py."""
@@ -100,9 +112,25 @@ class VoiceInputNode(Node):
         self.process_transcript(turn.text, device_index=device_index)
 
 
+def spin_in_background(node: Node) -> SingleThreadedExecutor:
+    """Spin `node`'s callbacks on a daemon thread; the caller shuts it down."""
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+
+    def spin() -> None:
+        try:
+            executor.spin()
+        except ExternalShutdownException:
+            return
+
+    threading.Thread(target=spin, daemon=True).start()
+    return executor
+
+
 def main():
     rclpy.init()
     node = VoiceInputNode()
+    executor = spin_in_background(node)
     voice_config = node.voice_config
     device_index = int(os.environ.get("VOICE_DEVICE_INDEX", voice_config.capture_card))
     runtime = VoiceRuntime(voice_config)
@@ -126,7 +154,11 @@ def main():
                     device_index=device_index,
                 )
 
-            turn = runtime.next_turn(ok_fn=rclpy.ok, on_wake=on_wake)
+            turn = runtime.next_turn(
+                ok_fn=rclpy.ok,
+                on_wake=on_wake,
+                is_muted_fn=lambda: node.is_speaking,
+            )
             if turn.metadata and not turn.metadata.get("wake", {}).get(
                 "wake_hit", False
             ):
@@ -136,6 +168,7 @@ def main():
 
     finally:
         runtime.close()
+        executor.shutdown()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

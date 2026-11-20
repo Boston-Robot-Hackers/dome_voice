@@ -1,6 +1,6 @@
 ---
-version: "2.0"
-generated: "2026-11-19"
+version: "2.1"
+generated: "2026-11-20"
 ---
 
 # 03 — `voice_input_node.py`: The ROS Shell
@@ -13,8 +13,9 @@ This is where the ROS-free pipeline meets the robot. `voice_input_node.py` does 
 - maps each transcript to an intent
 - publishes the intent on `/intent` and the node's state on `/voice/state`
 - plays a beep at each step, so the person gets feedback without a screen
+- **stops listening for the wake word while the robot speaks**, using `/voice/speaking` from `speech_output`
 
-It is deliberately thin: about 100 lines, with all the audio logic left in `runtime.py`.
+It is deliberately thin: about 150 lines, with all the audio logic left in `runtime.py`.
 
 ## Two topics, both plain strings
 
@@ -38,33 +39,80 @@ stateDiagram-v2
     SPEAKING --> IDLE: beep done
 ```
 
-**"SPEAKING" really means "giving feedback".** The node only plays a beep here. Real speech comes from `speech_output_node`, which this node knows nothing about.
+**"SPEAKING" really means "giving feedback".** The node only plays a beep here. Real speech comes from `speech_output_node`; this node learns about it only through `/voice/speaking` (next section).
 
-## A main loop instead of `spin`
+## A blocking loop, with callbacks on a side thread
 
-Most ROS nodes call `rclpy.spin` and react to callbacks. This one **has no subscriptions**, so it owns its thread with a plain loop:
+Most ROS nodes call `rclpy.spin` and react to callbacks. This one **owns the main thread** with a blocking mic loop, because `next_turn` reads audio continuously. But it also has one subscription, so callbacks need somewhere to run.
+
+### Spinning in the background
+
+```python
+def spin_in_background(node: Node) -> SingleThreadedExecutor:
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    ...
+    threading.Thread(target=spin, daemon=True).start()
+    return executor
+```
+
+- **A daemon thread** spins the executor, so a stuck callback can never keep the process alive after `main` returns.
+- **`ExternalShutdownException` ends the spin quietly**: that is what rclpy raises on Ctrl-C or the launcher's SIGTERM.
+- `finally` calls `executor.shutdown()` before destroying the node, so shutdown is deterministic.
+
+### Half-duplex: muting on `/voice/speaking`
+
+```python
+self.is_speaking = False
+self.create_subscription(Bool, "/voice/speaking", self.on_speaking, 10)
+```
+
+The callback just stores the latest value. The main loop hands the runtime a *callable*, not the flag, so it reads the current value on every chunk:
+
+```python
+turn = runtime.next_turn(
+    ok_fn=rclpy.ok,
+    on_wake=on_wake,
+    is_muted_fn=lambda: node.is_speaking,
+)
+```
+
+Reading a plain `bool` written by another thread is safe in CPython: assignment of a single attribute is atomic under the GIL. The worst case is reading a value one 80 ms chunk late.
+
+This solves two problems at once:
+
+- **The robot doesn't hear itself.** Without echo cancellation, a reply containing the wake word would start a turn.
+- **Beeps don't fight speech.** A wake during speech used to play a beep while `speech_output` held the sound card; `aplay` failed with "Device or resource busy" and the listener crashed.
+
+```mermaid
+sequenceDiagram
+    participant S as speech_output
+    participant V as voice_input (spin thread)
+    participant L as voice_input (mic loop)
+    S->>V: /voice/speaking true
+    V->>V: is_speaking = True
+    L->>L: chunks read, not scored
+    S->>V: /voice/speaking false
+    V->>V: is_speaking = False
+    L->>L: drain cooldown, then score
+```
+
+### The rest of the loop
 
 ```python
 while rclpy.ok():
     def on_wake(_wake):
-        node.get_logger().info("Wake word detected — speak your command")
-        node.publish_state("LISTENING")
-        beep(...)
-
-    turn = runtime.next_turn(ok_fn=rclpy.ok, on_wake=on_wake)
+        ...
+    turn = runtime.next_turn(...)
     if turn.metadata and not turn.metadata.get("wake", {}).get("wake_hit", False):
         break
     node.process_turn(turn, device_index=device_index)
     node.publish_state("IDLE")
 ```
 
-Three things to notice:
-
 - **`on_wake` is a callback into the runtime.** The runtime knows nothing about ROS or beeps; it just calls back at the moment of the wake, which is exactly when the beep has to play.
 - **`ok_fn=rclpy.ok` makes the stop prompt.** On SIGTERM, `rclpy.ok()` turns false, the runtime notices within one 80 ms chunk, and `next_turn` returns without a wake.
 - **A turn without a wake ends the node.** That's right for shutdown. But it also means that if `arecord` dies, the stream ends, and the node exits quietly with no error logged.
-
-`finally` closes arecord, destroys the node, and shuts rclpy down if it is still up.
 
 ## Turning a turn into feedback
 

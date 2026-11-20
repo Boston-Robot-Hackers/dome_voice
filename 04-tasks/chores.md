@@ -23,3 +23,4 @@ Bug fixes and refactors with no spec or behaviour change. Each bug fix gets a re
 - [ ] `beep()` still reads `SPEECH_ALSA_DEVICE`, which nothing sets any more: F13 moved speech's device into `voice.yaml` and removed it from the launch. So beeps play on ALSA's default device. Give `beep()` its device from the YAML (TF08 plans `playback_card`).
 - [ ] Fix `.githooks/pre-commit` so it stamps Version/Updated in files whose header is a docstring, not only `# Author:` comment headers; it silently skips those today.
 - [ ] Stop tracking `__pycache__/*.pyc` in git (`git rm --cached`, add to `.gitignore`); every test run shows them as modified.
+- [x] Tests no longer pin tuning values in `config/voice.yaml`. The baseline snapshot test (from F02) and the speech-section test failed on every gain or threshold change. Now: the robot YAML loads and validates, and `record_dir` is `none` (2026-11-20).

@@ -34,6 +34,7 @@ def _make_node():
         node.speech_gain = 0.35
         node.length_scale = 1.25
         node.speak_text = MagicMock()
+        node.speaking_pub = MagicMock()
         return SpeechOutputNode, node
 
 
@@ -202,6 +203,7 @@ def init_node(monkeypatch, tmp_path, yaml_text: str, config_param: str | None = 
     monkeypatch.setenv("DOME_PIPER_MODEL_PATH", str(model))
     node = SpeechOutputNode.__new__(SpeechOutputNode)
     node.create_subscription = MagicMock()
+    node.create_publisher = MagicMock()
     node.get_logger = MagicMock()
     node.declare_parameter = MagicMock()
     node.get_parameter = MagicMock()
@@ -243,3 +245,34 @@ def test_node_without_config_parameter_raises(monkeypatch, tmp_path):
 def test_node_with_bad_speech_value_fails_to_start(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="gain"):
         init_node(monkeypatch, tmp_path, "speech:\n  gain: 0\n")
+
+
+def speaking_states(node) -> list[bool]:
+    return [call.args[0].data for call in node.speaking_pub.publish.call_args_list]
+
+
+def test_on_announcement_publishes_speaking_around_speech():
+    SpeechOutputNode, node = _make_node()
+    states_at_speech = []
+    node.speak_text.side_effect = lambda _text: states_at_speech.append(
+        speaking_states(node)
+    )
+    msg = make_announcement_msg("hello", priority=PRIORITY_QUERY_REPLY, source="t")
+    SpeechOutputNode.on_announcement(node, msg)
+    assert states_at_speech == [[True]]
+    assert speaking_states(node) == [True, False]
+
+
+def test_on_announcement_clears_speaking_when_speech_fails():
+    SpeechOutputNode, node = _make_node()
+    node.speak_text.side_effect = RuntimeError("aplay failed")
+    msg = make_announcement_msg("hello", priority=PRIORITY_QUERY_REPLY, source="t")
+    SpeechOutputNode.on_announcement(node, msg)
+    assert speaking_states(node) == [True, False]
+
+
+def test_empty_announcement_publishes_no_speaking():
+    SpeechOutputNode, node = _make_node()
+    msg = make_announcement_msg("  ", priority=PRIORITY_QUERY_REPLY, source="t")
+    SpeechOutputNode.on_announcement(node, msg)
+    assert speaking_states(node) == []

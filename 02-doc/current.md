@@ -13,8 +13,8 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 
 ### Plan
 
-- **Features F03–F11 and F14** are drafted in `03-features/notdone/`, each with a task file in `04-tasks/notdone/`.
-- **Suggested order:** F03 → F05 → F04 → F07 → F11 → F10 → F06 → F09 → F08.
+- **Features F03, F05–F11 and F14** are drafted in `03-features/notdone/`, each with a task file in `04-tasks/notdone/`.
+- **Suggested order:** F03 → F05 → F07 → F11 → F10 → F06 → F09 → F08.
 - **Chores** are in `04-tasks/chores.md`.
 
 ### In progress: F14 (LLM command path)
@@ -22,7 +22,8 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - **F12 is done** (2026-11-20): 8 live exchanges, STT 0.3 s, Haiku 0.7–1.1 s, go. Findings are in `03-features/done/F12-llm-loop-spike.md`.
 - **F14** adds a second wake word ("hey robbie"; `hey_jarvis` for now) whose turns go to Whisper and Claude on the VM. Claude emits `/intent` through tools, or answers. "hey marvin" and the grammar stay.
 - **T01 and T02 are done** (2026-11-20): every spoken request became the right intent. The failures were downstream (dome_semantic and dome_mission not running, a turn-speed limit in dome_control, now fixed), plus a speaker clash F04 fixes. Results are in TF14 T02.
-- **Next:** F04 (don't listen while speaking), then TF14 T03. Switching to F04 needs your OK.
+- **F04 is done** (2026-11-20): `speech_output` publishes `/voice/speaking`, and `voice_input` and the spike's `robot_mic_pub.py` ignore the wake word while it is true. Checked on the robot.
+- **Next:** TF14 T03, `voice_input` listens for both wake words.
 
 ### Done: F13 (speech settings in voice.yaml)
 
@@ -36,7 +37,7 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - **T02 is mostly done:** 16 turns are recorded in `~/voice_recordings`. Left: once with motors running.
 - **Next code task: T04, the replay tool.** It turns the ad hoc replay scripts used on 2026-11-19 into `python3 -m dome_voice.replay`.
 - **Replay limit:** a recording ends where the live turn ended, so settings that listen longer can't be judged. T04 should record about 2 s past the turn's end.
-- **To record again**, set `record_dir: ~/voice_recordings` in `voice.yaml`, then set it back to `none` before committing; the baseline test checks it.
+- **To record again**, set `record_dir: ~/voice_recordings` in `voice.yaml`, then set it back to `none` before committing; `test_robot_yaml_does_not_record_turns` checks it.
 
 ### Paused: F03 (one command table)
 
