@@ -1,4 +1,6 @@
-# LLM loop spike (F12)
+# LLM loop spike (F12), and the VM side of F14
+
+**The VM node is no longer in this directory.** F14 moved it into the package, as `dome_voice/llm_node.py` (with `dome_voice/llm_turn.py`). It runs from the repo root with `python3 -m dome_voice.llm_node`. The robot side here (`robot_mic_pub.py`) stays until F14 T03 replaces it.
 
 Spoken question on the robot → transcribed and answered on the VM → spoken by the robot.
 
@@ -6,7 +8,7 @@ Spoken question on the robot → transcribed and answered on the VM → spoken b
 
 ```
 robot  robot_mic_pub.py   mic → wake word → capture → /voice/utterance (UInt8MultiArray, 16 kHz int16 PCM)
-VM     vm_llm_node.py     /voice/utterance → faster-whisper → Claude → /voice/llm_reply (String)
+VM     llm_node           /voice/utterance or /voice/llm_text → faster-whisper → Claude → /intent, /voice/llm_reply (String)
 robot  robot_mic_pub.py   /voice/llm_reply → /announcement (dome_control Announcement)
 robot  speech_output      /announcement → Piper → speaker
 ```
@@ -19,10 +21,8 @@ All in `/home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/`, which is the s
 
 - `robot_mic_pub.py`: the robot side (mic and relay).
 - `spike_capture.py`: captures until silence; used by `robot_mic_pub.py`.
-- `vm_llm_node.py`: the VM side (Whisper and Claude).
-- `llm_turn.py`: PCM decoding and the Claude conversation; used by `vm_llm_node.py`.
 - `publish_wav.py`: publishes a recorded WAV on `/voice/utterance`, to test the VM without the mic.
-- `test_spike_capture.py`, `test_llm_turn.py`: unit tests.
+- `test_spike_capture.py`: unit tests.
 
 ## One-time VM setup
 
@@ -34,20 +34,12 @@ ros2 topic list | grep /voice/utterance
 
 **2. ROS 2.** Use the same distro as the robot (kilted) if you can.
 
-**3. The code.** The VM needs only `vm_llm_node.py` and `llm_turn.py`. Clone the repo into the VM's workspace, the same place as on the robot (to update it later, run `git pull` in that directory):
+**3. The code.** Clone the repo into the VM's workspace, the same place as on the robot (to update it later, run `git pull` in that directory):
 
 ```bash
 git clone git@github.com:Boston-Robot-Hackers/dome_voice.git /home/pitosalas/ros2_ws/src/dome_voice
 ```
 
-or by copying them from the robot:
-
-```bash
-mkdir -p /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop
-scp pitosalas@dome-R1:/home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/{vm_llm_node.py,llm_turn.py} /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/
-```
-
-If the VM can't resolve `dome-R1`, use the robot's IP address, which was `192.168.4.100` on 2026-11-20.
 
 **4. Python packages.** On Ubuntu 24.04, add `--break-system-packages`:
 
@@ -81,7 +73,7 @@ To change the volume, edit `/home/pitosalas/ros2_ws/src/dome_voice/config/voice.
 
 ```bash
 source /opt/ros/kilted/setup.bash
-python3 /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/vm_llm_node.py
+cd /home/pitosalas/ros2_ws/src/dome_voice && python3 -m dome_voice.llm_node
 ```
 
 Wait for `Ready: Whisper 'base.en', Claude 'claude-haiku-5-5'`.
@@ -115,11 +107,11 @@ python3 /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/publish_wav.py \
 They run on the robot and need neither `anthropic` nor `faster-whisper`:
 
 ```bash
-python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/
+python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/ /home/pitosalas/ros2_ws/src/dome_voice/test/test_llm_turn.py
 ```
 
 ## Notes
 
 - **The robot scripts use the installed `dome_voice`.** After changing `/home/pitosalas/ros2_ws/src/dome_voice/dome_voice/`, run `colcon build --packages-select dome_voice` in `/home/pitosalas/ros2_ws`.
-- **Options:** `vm_llm_node.py --whisper-model small.en` is slower but more accurate. `--model <id>` picks another Claude model.
+- **Options:** `llm_node --whisper-model small.en` is slower but more accurate. `--model <id>` picks another Claude model. `--persona FILE` picks the persona (default `config/llm_persona.md`).
 - **Each reply is billed** to the API key's account.

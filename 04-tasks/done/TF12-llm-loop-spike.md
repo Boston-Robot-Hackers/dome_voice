@@ -11,10 +11,10 @@ Run the tests with `python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/spi
 **Test**: `test_spike_capture.py` has 5 unit tests. Manual check, 2026-11-20: two utterances, 1.8 s and 2.6 s, arrived on `/voice/utterance`.
 
 ## T02 — VM side: transcribe and reply; robot relays the reply
-**Status**: code done and unit tests passing; the manual check on the VM is still to do
+**Status**: done
 **Description**: `spikes/llm_loop/vm_llm_node.py` subscribes to `/voice/utterance` and transcribes with faster-whisper. It sends the transcript, with the conversation history, to Claude (`llm_turn.Conversation`), and publishes the reply as a `String` on `/voice/llm_reply`. It logs the transcript, the reply, and the STT and LLM times. `robot_mic_pub.py` relays `/voice/llm_reply` to `/announcement` as an `Announcement` with source `llm_spike`. `publish_wav.py` replays a recorded WAV on `/voice/utterance`.
 
-**Test**: `test_llm_turn.py` has 7 unit tests: PCM decoding, the history, failure and refusal handling. Checked on the robot, 2026-11-20: `publish_wav.py` delivered a 6.2 s recording, and a string on `/voice/llm_reply` came out on `/announcement`. Manual check still to do: run the VM node and replay a WAV to it.
+**Test**: `test_llm_turn.py` has 7 unit tests: PCM decoding, the history, failure and refusal handling. Checked on the robot, 2026-11-20: `publish_wav.py` delivered a 6.2 s recording, and a string on `/voice/llm_reply` came out on `/announcement`. The live run in T04 covered the VM side end to end.
 
 ## T03 — Setup notes
 **Status**: done
@@ -29,13 +29,10 @@ Run the tests with `python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/spi
 **Test**: manual, because the script needs ROS and the mic. Start `robot_mic_pub.py` and check that it logs `Listening for 'hey_jarvis'`, that "hey jarvis" wakes it, and that "hey marvin" doesn't.
 
 ## T04 — Try it and record findings
-**Status**: not done
+**Status**: done (2026-11-20, 8 exchanges; findings in F12)
 **Description**: Run about 10 real exchanges. Record the end-to-end latency, the STT and LLM times, transcript errors, and whether the robot heard its own reply. Write the findings and a go/no-go recommendation at the bottom of F12.
 
 **Test**: manual. The findings are the result.
 
 ## T06 — Train a "hey robbie" wake model
-**Status**: not done
-**Description**: openWakeWord ships no "hey robbie" model. Train one with its training notebook (synthetic Piper clips, on a free Colab GPU). Install the `.onnx` on the robot, and pass its absolute path as `--wake-word`.
-
-**Test**: manual. Record how often it wakes on "hey robbie", and how often it false-wakes on ordinary talk and on "hey marvin", next to `hey_jarvis` under the same conditions.
+**Status**: moved to F14 (TF14), which needs it

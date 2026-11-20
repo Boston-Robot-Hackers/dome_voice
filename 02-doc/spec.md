@@ -94,7 +94,7 @@ from dome_voice import (
 
 ## Direction, not yet features
 
-- **An LLM path runs next to the fixed grammar, not instead of it.** An open STT (Whisper) plus an LLM turns speech into `/intent` messages or a spoken reply, and may run offboard. **The fixed-grammar path stays**, because other uses may need it. F12, a spike, decides whether to go ahead; a feature will follow if it does.
+- **An LLM path runs next to the fixed grammar, not instead of it.** An open STT (Whisper) plus an LLM turns speech into `/intent` messages or a spoken reply, and may run offboard. **The fixed-grammar path stays**, because other uses may need it. F12, a spike, recommended going ahead *(planned, F14)*.
 - **Each path has its own wake word:** "hey marvin" for the fixed grammar, and "hey robbie" planned for the LLM.
 - **With no network, the LLM path says it is offline.** The fixed-grammar path and the stop phrase (F07) keep working, because neither depends on the network.
 - **Barge-in** (interrupting the robot mid-sentence) needs echo cancellation, which needs the mic array (F08).
