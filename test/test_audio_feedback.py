@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""
-test_audio_feedback.py — tests for the aplay beep.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-"""
+# test_audio_feedback — tests for the aplay beep.
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
 
 import subprocess
 from unittest.mock import patch

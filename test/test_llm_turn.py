@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""
-test_llm_turn.py — tests for the LLM command path's audio decoding, tools, and conversation.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-"""
+# test_llm_turn — tests for the LLM path's audio decoding, tools and conversation
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
 
 from datetime import datetime
 from types import SimpleNamespace

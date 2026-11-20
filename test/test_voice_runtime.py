@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# test_voice_runtime — tests for wake detection, muting and command capture
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+
 import collections
 import json
 from dataclasses import replace

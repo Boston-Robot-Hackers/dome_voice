@@ -1,5 +1,7 @@
 # F12 — LLM conversation loop (spike)
 
+**Date Created:** 2026-11-20
+
 **Priority**: Medium
 **Done:** yes
 **Tasks File Created:** yes
@@ -46,7 +48,7 @@ robot: /voice/llm_reply → /announcement → speech_output (Piper) → speaker
 
 **Expected output**: The robot speaks a short, relevant answer. The VM node logs the transcript, the reply, and the time for each stage (STT, LLM).
 
-## Findings (T04, 2026-11-20)
+## Findings (TF12.3, 2026-11-20)
 
 **Setup:** 8 exchanges, Haiku (`claude-haiku-5-5`, low effort), Whisper `base.en` on the VM, wake word `hey_jarvis`, robot standing still.
 

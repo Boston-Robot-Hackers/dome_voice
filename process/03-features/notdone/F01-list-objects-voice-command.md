@@ -1,5 +1,7 @@
 # F01 — List Objects Voice Command
 
+**Date Created:** 2026-05-07
+
 **Priority**: Medium
 **Done:** no
 **Tasks File Created:** yes

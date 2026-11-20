@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# test_speech_output_node — tests for the announcement-to-speech node
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+
 import json
 import sys
 from unittest.mock import MagicMock, patch

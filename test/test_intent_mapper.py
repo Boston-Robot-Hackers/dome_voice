@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# test_intent_mapper — tests for the command table and transcript matching
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+
 from dome_voice import intent_mapper
 from dome_voice.intent_mapper import IntentMapper, command_words, map_intent
 

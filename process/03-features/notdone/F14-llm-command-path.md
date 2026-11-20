@@ -46,7 +46,7 @@ any node: /voice/llm_text (String) → VM llm node, skipping Whisper    (e.g. a 
   - **The persona** is a separate text file, `config/llm_persona.md`: who the robot is, where it comes from, its likes, dislikes and attitude.
 - **F14 ships only a placeholder persona** (name and a single sentence). Writing the real one is later work, and needs no code change, only a node restart. A missing persona file is an error, not a silent default.
 - **The current time starts each user message**, so "what time is it?" works without a tool. It isn't in the system prompt, so that prompt stays the same across turns and can be cached.
-- **Wake word:** `hey_jarvis` stands in until a "hey robbie" model is trained (T05).
+- **Wake word:** `hey_jarvis` stands in until a "hey robbie" model is trained (TF14.4).
 
 ## Safety
 

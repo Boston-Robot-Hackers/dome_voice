@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""
-llm_node.py — VM side of the LLM command path: speech or text → Claude → /intent and a reply.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-
-Inputs:
+# llm_node — VM side of the LLM path: speech or text → Claude → /intent and a reply
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+"""Inputs:
 - `/voice/utterance` (`std_msgs/UInt8MultiArray`): 16 kHz int16 mono PCM from
   the robot, transcribed with faster-whisper on the CPU.
 - `/voice/llm_text` (`std_msgs/String`): a question from a program (a gamepad
@@ -21,7 +21,7 @@ ROS 2 and this package. Work runs in the subscription callbacks, so inputs
 queue up in order. Parameters: `persona` (required, the persona file),
 `whisper_model` (default `base.en`), `model` (default Claude Haiku).
 
-    bl dome_voice remote.launch.py
+bl dome_voice remote.launch.py
     bl dome2 remote.launch.py --options "vi vo"       # with the map view
 """
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""
-llm_turn.py — ROS-free core of the LLM command path: audio decoding and the chat with Claude.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-
-`Conversation.ask` takes one transcript (or text a program sent) and returns
+# llm_turn — ROS-free core of the LLM path: audio decoding and the chat with Claude
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+"""`Conversation.ask` takes one transcript (or text a program sent) and returns
 an `LlmTurn`: the text to speak, possibly empty, and the `/intent` dicts that
 Claude chose through tools. The client is passed in, so tests use a fake and
 this module needs neither `anthropic` nor ROS.

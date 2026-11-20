@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""
-publish_wav.py — publish a recorded turn on /voice/utterance, to test the VM node without the mic.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-
-Takes a 16 kHz mono WAV, such as one from `~/voice_recordings`. Those are
+# publish_wav — publish a recorded turn on /voice/utterance, to test the VM node
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+"""Takes a 16 kHz mono WAV, such as one from `~/voice_recordings`. Those are
 saved before any gain, so this applies `stt_gain_db` from the voice YAML,
 the same as the live robot side does.
 
-    python3 spikes/llm_loop/publish_wav.py ~/voice_recordings/<stamp>.wav
+python3 spikes/llm_loop/publish_wav.py ~/voice_recordings/<stamp>.wav
 """
 
 import argparse

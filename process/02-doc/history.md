@@ -2,9 +2,17 @@
 
 Completed work moved out of `current.md`, newest first.
 
+## 2026-11-20 — LLM command path on the robot; F04; F12 closed; kit sync
+
+- **F12 closed with a go:** 8 live exchanges, STT 0.3 s, Haiku 0.7–1.1 s. Findings are in F12.
+- **F14, TF14.0–TF14.2 and TF14.7:** the VM node gives Claude one tool per `/intent`; every spoken request in the trial became the right intent. `voice_input` runs the LLM path when `command_path: llm`. The VM starts with `bl dome2 remote.launch.py --options "vi vo"`.
+- **F04:** `speech_output` publishes `/voice/speaking`, and listeners ignore the wake word while it is true. This fixed a crash when a wake beep met speech on the sound card.
+- **Chore:** the robot YAML tests check validity and `record_dir`, not tuning values.
+- **`.claude/` synced from j3;** the docs moved into `process/`; file headers, `TFNN.N` step numbers and `Date Created` applied throughout.
+
 ## 2026-11-20 — LLM spike runs; speech streams; speech config in voice.yaml
 
-- **F12 spike, T01–T03:** robot mic → `/voice/utterance` → VM (faster-whisper `base.en`, Claude) → `/voice/llm_reply` → robot relay → `/announcement`. Works end to end. The spike then switched from Opus to `claude-haiku-5-5` for latency.
+- **F12 spike, TF12.0–TF12.2:** robot mic → `/voice/utterance` → VM (faster-whisper `base.en`, Claude) → `/voice/llm_reply` → robot relay → `/announcement`. Works end to end. The spike then switched from Opus to `claude-haiku-5-5` for latency.
 - **Chore: `speech_output` streams Piper** (`--output_raw` into `aplay -t raw`, gain in numpy). First audio on a two-sentence reply: about 1.3 s, where the WAV path took about 2.2 s.
 - **F13:** speech gain, length scale and device moved into `voice.yaml` under `speech:`. The launch's `ENV_FALLBACKS` and speech arguments are gone. The gain went from 0.25 to 0.5.
 
@@ -19,14 +27,14 @@ Completed work moved out of `current.md`, newest first.
 
 ### F03 (one command table)
 
-- **T01:** `explore` maps to `exploration_start`.
-- **T03:** the Vosk grammar is derived from `PHRASE_INTENTS` via `command_words()`; `voice.yaml` no longer has a `grammar` key.
-- **T02 passed in a basic sense:** "hey marvin … explore" published `exploration_start` on `/intent`.
+- **TF03.0:** `explore` maps to `exploration_start`.
+- **TF03.2:** the Vosk grammar is derived from `PHRASE_INTENTS` via `command_words()`; `voice.yaml` no longer has a `grammar` key.
+- **TF03.1 passed in a basic sense:** "hey marvin … explore" published `exploration_start` on `/intent`.
 
 ### F05 (record and replay)
 
-- **T01:** `record_dir` saves each turn, from 1 s before the wake, as WAV + JSON (`dome_voice/turn_recorder.py`).
-- **T02 (in part):** 16 turns recorded over three sessions. Offline replay of `capture_command` matched live exactly, which made the fixes below measurable.
+- **TF05.0:** `record_dir` saves each turn, from 1 s before the wake, as WAV + JSON (`dome_voice/turn_recorder.py`).
+- **TF05.1 (in part):** 16 turns recorded over three sessions. Offline replay of `capture_command` matched live exactly, which made the fixes below measurable.
 
 ### I02 (voice runtime and mic)
 

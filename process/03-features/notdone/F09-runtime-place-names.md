@@ -16,7 +16,7 @@ The usual answer is open-vocabulary speech-to-text plus an LLM. But **Vosk accep
 ### Scope
 
 - **A name source**: `VoiceRuntime` takes a callable returning the current list of names. The core stays ROS-free.
-- **`voice_input` supplies it** from dome_semantic's targets topic (the one `nav_intent_check.py` publishes). The exact topic and message are confirmed in T01.
+- **`voice_input` supplies it** from dome_semantic's targets topic (the one `nav_intent_check.py` publishes). The exact topic and message are confirmed in TF09.0.
 - **Grammar = command words + "go to" + each name.** Multi-word names ("red chair") are full phrases in the grammar.
 - **"go to <name>"** maps to `navigation_go` with `slots.label = <name>`.
 - An empty name list behaves exactly as today.

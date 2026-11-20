@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""
-intent_mapper.py — maps Vosk transcripts to structured intent dicts.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-"""
+# intent_mapper — maps Vosk transcripts to structured intent dicts.
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
 
 PHRASE_INTENTS = (
     (("stop",), "stop"),

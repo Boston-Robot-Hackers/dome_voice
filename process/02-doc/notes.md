@@ -28,3 +28,22 @@ dome_semantic and dome_control's `spin_survey` use.
 The old in-code table had `threshold` 0.7 and `wake_hits` 3, tuned for `alexa`. The robot never
 ran with them, because its YAML replaced the table. They are the starting point for re-tuning
 `hey_marvin`.
+
+## What is built
+
+- **Core library (no ROS):** `runtime.py` (config, mic, wake detection with muting, Vosk capture), `utterance_capture.py` (the LLM path's capture), `llm_turn.py` (Claude with intent tools), `intent_mapper.py` (the command table), `turn_recorder.py`, `audio_feedback.py`.
+- **ROS nodes:** `voice_input` (either path, by `command_path`), `speech_output` (Piper, `/voice/speaking`), and `llm_node` on the VM.
+- **Launches:** `launch/robot.launch.py` (robot) and `launch/remote.launch.py` (VM), included by dome2's `robot.launch.py` and `remote.launch.py` as `voice`.
+
+## Recording turns
+
+Set `record_dir: ~/voice_recordings` in `voice.yaml` for a session, then set it back to `none` before committing; `test_robot_yaml_does_not_record_turns` checks it. Recording works on the grammar path only.
+
+## Mixer state (I02)
+
+Saved with `alsactl store` on 2026-11-19 20:08: PGA 60, ADC HPF 0.0045xFs on both channels, PCM 100, DACs 118.
+
+## Diagnostics
+
+- **Mic levels:** `cd ~/voice_diag && python3 mic_diag.py ~/ros2_ws/src/dome_voice/config/voice.yaml`. Stop the voice launch first, because the mic opens only once.
+- **Smoke test (grammar path, hardware):** `python3 -m dome_voice.runtime --trials 5`.

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""
-test_utterance_capture.py — tests for the LLM path's capture-until-silence and its turn.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-"""
+# test_utterance_capture — tests for the LLM path's capture-until-silence and its turn.
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
 
 import collections
 from dataclasses import replace

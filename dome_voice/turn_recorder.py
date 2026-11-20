@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""
-turn_recorder.py — save each voice turn's mic audio to WAV, for listening and replay.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-
-`TurnRecorder` wraps the mic stream and sees every read the runtime makes.
+# turn_recorder — save each voice turn's mic audio to WAV, for listening and replay.
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+"""`TurnRecorder` wraps the mic stream and sees every read the runtime makes.
 It has two modes:
 
 - **Waiting** (between turns): reads go into a ring buffer holding the last

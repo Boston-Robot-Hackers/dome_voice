@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""
-runtime.py — ROS-free voice pipeline: wake detection, STT, and turn capture.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-"""
+# runtime — ROS-free voice pipeline: wake detection, STT, and turn capture.
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
 
 import argparse
 import collections

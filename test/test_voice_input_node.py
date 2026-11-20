@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# test_voice_input_node — tests for voice_input's publishing, muting and LLM relay
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+
 import json
 from unittest.mock import MagicMock, patch
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# speech_output_node.py — ROS2 node: subscribe to /announcement and speak via Piper + ALSA
+# speech_output_node — ROS2 node: speak each /announcement via Piper and ALSA
 # Author: Pito Salas and Claude Code
-# Version: 3
+# Version: 4
 # Created: 2026-11-19
 # Updated: 2026-11-20
 # Open Source Under MIT license

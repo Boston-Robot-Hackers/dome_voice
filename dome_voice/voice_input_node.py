@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""
-voice_input_node.py — ROS2 node: wake word, then a command by fixed grammar or by LLM.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-
-`command_path` in the voice YAML picks what happens after the wake word:
+# voice_input_node — ROS2 node: wake word, then a command by fixed grammar or by LLM.
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+"""`command_path` in the voice YAML picks what happens after the wake word:
 
 - **grammar:** Vosk transcribes against the command table, and the node
   publishes the matched intent on `/intent`.

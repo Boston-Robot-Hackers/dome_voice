@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# setup — ament_python packaging for dome_voice
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+
 from setuptools import find_packages, setup
 
 package_name = "dome_voice"

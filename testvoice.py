@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Standalone voice test — no ROS. Listens for wake word, captures one command, prints debug."""
+# testvoice — standalone voice test, no ROS: one wake and command, with debug output
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
 
 from dome_voice.runtime import (
     VoiceRuntime,

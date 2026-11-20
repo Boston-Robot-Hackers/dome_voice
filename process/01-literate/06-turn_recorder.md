@@ -71,6 +71,6 @@ samples = stereo_to_mono(b"".join(self.turn_reads))
 
 ## Observations
 
-1. **A recording ends where the live turn ended.** A setting that would keep listening longer, such as a larger `silence_secs`, can't be judged from it. Recording about 2 s past the end would fix that (TF05 T04).
+1. **A recording ends where the live turn ended.** A setting that would keep listening longer, such as a larger `silence_secs`, can't be judged from it. Recording about 2 s past the end would fix that (TF05.3).
 2. **`RATE` is defined here and imported by `runtime.py`**, because the import has to go this way round. An `audio_format.py` holding the format constants would be a more natural home.
 3. **Recordings are personal audio.** They belong outside the repo; `record_dir` defaults to off, and the robot's YAML keeps it `none` in git.

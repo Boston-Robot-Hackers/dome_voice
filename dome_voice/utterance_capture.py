@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""
-utterance_capture.py — the LLM path's turn: wake word, then the utterance as raw PCM, no STT.
-
-Author: Pito Salas and Claude Code
-Open Source Under MIT license
-
-After a wake, `capture_utterance` reads mono chunks until the speaker stops,
+# utterance_capture — the LLM path's turn: wake word, then raw PCM, no STT
+# Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-20
+# Updated: 2026-11-20
+# Open Source Under MIT license
+"""After a wake, `capture_utterance` reads mono chunks until the speaker stops,
 using the same start and silence rules as `runtime.capture_command`, and
 returns the audio itself instead of a transcript. The audio gets
 `stt_gain_db`, since the mic is quiet (I02) and whatever transcribes it
