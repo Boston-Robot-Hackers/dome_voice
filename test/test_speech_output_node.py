@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import json
-import wave
+import sys
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pytest
 from dome_control.announcement_contract import (
     PRIORITY_CHITCHAT,
     PRIORITY_QUERY_REPLY,
@@ -10,12 +12,13 @@ from dome_control.announcement_contract import (
     make_announcement_msg,
 )
 
+from dome_voice import speech_output_node
 from dome_voice.speech_output_node import (
-    apply_wav_gain,
-    parse_length_scale,
-    parse_speech_gain,
-    play_wav,
-    synthesize_to_wav,
+    aplay_command,
+    model_sample_rate,
+    piper_command,
+    scale_pcm,
+    stream_speech,
 )
 
 
@@ -82,96 +85,92 @@ def test_on_announcement_ignores_empty():
     node.speak_text.assert_not_called()
 
 
-@patch("dome_voice.speech_output_node.subprocess.run")
-def test_synthesize_to_wav_invokes_piper(mock_run):
-    synthesize_to_wav(
-        text="test speech",
-        wav_path="/tmp/out.wav",
-        piper_bin="piper",
-        model_path="/tmp/model.onnx",
-        length_scale=1.4,
-    )
-    mock_run.assert_called_once()
-    cmd = mock_run.call_args.args[0]
-    assert cmd[:2] == ["piper", "--model"]
-    assert "/tmp/model.onnx" in cmd
-    assert "--output_file" in cmd
-    assert "/tmp/out.wav" in cmd
-    assert "--length_scale" in cmd
-    assert "1.4" in cmd
+def test_piper_command_streams_raw_audio():
+    cmd = piper_command("piper", "/tmp/model.onnx", 1.4)
+    assert cmd[:3] == ["piper", "--model", "/tmp/model.onnx"]
+    assert "--output_raw" in cmd
+    assert "--output_file" not in cmd
+    assert cmd[cmd.index("--length_scale") + 1] == "1.4"
     assert "--quiet" in cmd
 
 
-@patch("dome_voice.speech_output_node.subprocess.run")
-def test_play_wav_invokes_aplay(mock_run):
-    play_wav("/tmp/out.wav", alsa_device="hw:1,0")
-    mock_run.assert_called_once_with(
-        ["aplay", "-D", "hw:1,0", "/tmp/out.wav"],
-        check=True,
-        capture_output=True,
+def test_aplay_command_reads_raw_mono_at_model_rate():
+    assert aplay_command(22050, "hw:1,0") == [
+        "aplay", "-q", "-D", "hw:1,0",
+        "-t", "raw", "-f", "S16_LE", "-r", "22050", "-c", "1",
+    ]  # fmt: skip
+
+
+def test_aplay_command_without_device_uses_default():
+    assert "-D" not in aplay_command(16000)
+
+
+def test_model_sample_rate_reads_piper_json(tmp_path):
+    model = tmp_path / "voice.onnx"
+    (tmp_path / "voice.onnx.json").write_text(
+        json.dumps({"audio": {"sample_rate": 22050}})
     )
+    assert model_sample_rate(str(model)) == 22050
 
 
-def test_parse_speech_gain():
-    assert parse_speech_gain("0.35") == 0.35
-    assert parse_speech_gain("1") == 1.0
+def test_model_sample_rate_requires_model_path():
+    with pytest.raises(RuntimeError, match="DOME_PIPER_MODEL_PATH"):
+        model_sample_rate("")
 
 
-def test_parse_speech_gain_rejects_bad_values():
-    for value in ("0", "-1", "loud"):
-        try:
-            parse_speech_gain(value)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"Expected ValueError for {value}")
+def test_scale_pcm_scales_and_clips():
+    pcm = np.array([10000, -10000, 30000], dtype="<i2").tobytes()
+    scaled = np.frombuffer(scale_pcm(pcm, 0.35), dtype="<i2").tolist()
+    assert scaled == [3500, -3500, 10500]
+    loud = np.frombuffer(scale_pcm(pcm, 2.0), dtype="<i2").tolist()
+    assert loud == [20000, -20000, 32767]
 
 
-def test_parse_length_scale():
-    assert parse_length_scale("1.25") == 1.25
-    assert parse_length_scale("0.75") == 0.75
+def fake_synth(n_samples: int, value: int) -> list[str]:
+    """A synthesizer stand-in: reads all of stdin, writes constant int16 PCM."""
+    script = (
+        "import sys, struct; sys.stdin.read(); "
+        f"sys.stdout.buffer.write(struct.pack('<h', {value}) * {n_samples})"
+    )
+    return [sys.executable, "-c", script]
 
 
-def test_parse_length_scale_rejects_bad_values():
-    for value in ("0", "-1", "fast"):
-        try:
-            parse_length_scale(value)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"Expected ValueError for {value}")
+def recorded_samples(path) -> list[int]:
+    return np.frombuffer(path.read_bytes(), dtype="<i2").tolist()
 
 
-def _write_test_wav(path):
-    with wave.open(str(path), "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(16000)
-        wav.writeframes((10000).to_bytes(2, byteorder="little", signed=True))
+def test_stream_speech_pipes_scaled_audio_to_player(tmp_path):
+    out = tmp_path / "played.raw"
+    stream_speech("hello", fake_synth(1000, 10000), ["sh", "-c", f"cat > {out}"], 0.5)
+    assert recorded_samples(out) == [5000] * 1000
 
 
-def _read_test_sample(path):
-    with wave.open(str(path), "rb") as wav:
-        frame = wav.readframes(1)
-    return int.from_bytes(frame, byteorder="little", signed=True)
+def test_stream_speech_carries_odd_bytes_across_reads(tmp_path, monkeypatch):
+    monkeypatch.setattr(speech_output_node, "PCM_CHUNK_BYTES", 3)
+    out = tmp_path / "played.raw"
+    stream_speech("hi", fake_synth(50, 1234), ["sh", "-c", f"cat > {out}"], 1.0)
+    assert recorded_samples(out) == [1234] * 50
 
 
-def test_apply_wav_gain_reduces_sample_amplitude(tmp_path):
-    raw_path = tmp_path / "raw.wav"
-    quiet_path = tmp_path / "quiet.wav"
-    _write_test_wav(raw_path)
-
-    apply_wav_gain(str(raw_path), str(quiet_path), 0.35)
-
-    assert _read_test_sample(quiet_path) == 3500
+def test_stream_speech_raises_when_player_fails():
+    player = ["sh", "-c", "cat > /dev/null; echo no device >&2; exit 3"]
+    with pytest.raises(RuntimeError, match=r"aplay failed \(3\): no device"):
+        stream_speech("hello", fake_synth(100, 1), player, 1.0)
 
 
-@patch("dome_voice.speech_output_node.play_wav")
-@patch("dome_voice.speech_output_node.apply_wav_gain")
-@patch("dome_voice.speech_output_node.synthesize_to_wav")
-def test_speak_text_applies_gain_when_configured(
-    mock_synth, mock_gain, mock_play, tmp_path
-):
+def test_stream_speech_raises_when_synth_fails():
+    synth = ["sh", "-c", "cat > /dev/null; echo bad model >&2; exit 1"]
+    with pytest.raises(RuntimeError, match="piper failed"):
+        stream_speech("hello", synth, ["sh", "-c", "cat > /dev/null"], 1.0)
+
+
+def test_stream_speech_cleans_up_when_player_dies_early():
+    with pytest.raises((OSError, RuntimeError)):
+        stream_speech("hello", fake_synth(200_000, 1), ["false"], 1.0)
+
+
+@patch("dome_voice.speech_output_node.stream_speech")
+def test_speak_text_streams_with_node_settings(mock_stream):
     from dome_voice.speech_output_node import SpeechOutputNode
 
     node = SpeechOutputNode.__new__(SpeechOutputNode)
@@ -180,17 +179,67 @@ def test_speak_text_applies_gain_when_configured(
     node.alsa_device = "hw:1,0"
     node.speech_gain = 0.35
     node.length_scale = 1.25
-    raw_wav = tmp_path / "raw.wav"
-    quiet_wav = tmp_path / "quiet.wav"
-    raw_wav.touch()
-    quiet_wav.touch()
-    node.make_wav_path = MagicMock(side_effect=[str(raw_wav), str(quiet_wav)])
+    node.sample_rate = 22050
 
     SpeechOutputNode.speak_text(node, "hello")
 
-    mock_synth.assert_called_once()
-    assert mock_synth.call_args.kwargs["length_scale"] == 1.25
-    mock_gain.assert_called_once_with(str(raw_wav), str(quiet_wav), 0.35)
-    mock_play.assert_called_once_with(str(quiet_wav), alsa_device="hw:1,0")
-    assert not raw_wav.exists()
-    assert not quiet_wav.exists()
+    mock_stream.assert_called_once_with(
+        "hello",
+        piper_command("piper", "/tmp/model.onnx", 1.25),
+        aplay_command(22050, "hw:1,0"),
+        0.35,
+    )
+
+
+def init_node(monkeypatch, tmp_path, yaml_text: str, config_param: str | None = None):
+    """Run SpeechOutputNode.__init__ with ROS mocked; return the node."""
+    from dome_voice.speech_output_node import SpeechOutputNode
+
+    config = tmp_path / "voice.yaml"
+    config.write_text(yaml_text)
+    model = tmp_path / "voice.onnx"
+    (tmp_path / "voice.onnx.json").write_text('{"audio": {"sample_rate": 22050}}')
+    monkeypatch.setenv("DOME_PIPER_MODEL_PATH", str(model))
+    node = SpeechOutputNode.__new__(SpeechOutputNode)
+    node.create_subscription = MagicMock()
+    node.get_logger = MagicMock()
+    node.declare_parameter = MagicMock()
+    node.get_parameter = MagicMock()
+    param = node.get_parameter.return_value.get_parameter_value.return_value
+    param.string_value = str(config) if config_param is None else config_param
+    with patch("rclpy.node.Node.__init__", return_value=None):
+        SpeechOutputNode.__init__(node)
+    return node
+
+
+def test_node_reads_speech_settings_from_the_yaml(monkeypatch, tmp_path):
+    yaml_text = "speech:\n  gain: 0.6\n  length_scale: 1.2\n  alsa_device: hw:2,0\n"
+    node = init_node(monkeypatch, tmp_path, yaml_text)
+    assert (node.speech_gain, node.length_scale, node.alsa_device) == (
+        0.6,
+        1.2,
+        "hw:2,0",
+    )
+    assert node.sample_rate == 22050
+
+
+def test_node_ignores_the_old_environment_variables(monkeypatch, tmp_path):
+    monkeypatch.setenv("SPEECH_GAIN", "0.9")
+    monkeypatch.setenv("PIPER_LENGTH_SCALE", "2.0")
+    monkeypatch.setenv("SPEECH_ALSA_DEVICE", "hw:9,0")
+    node = init_node(monkeypatch, tmp_path, "")
+    assert (node.speech_gain, node.length_scale, node.alsa_device) == (
+        0.25,
+        1.0,
+        "plughw:0,0",
+    )
+
+
+def test_node_without_config_parameter_raises(monkeypatch, tmp_path):
+    with pytest.raises(RuntimeError, match="config"):
+        init_node(monkeypatch, tmp_path, "", config_param="")
+
+
+def test_node_with_bad_speech_value_fails_to_start(monkeypatch, tmp_path):
+    with pytest.raises(ValueError, match="gain"):
+        init_node(monkeypatch, tmp_path, "speech:\n  gain: 0\n")

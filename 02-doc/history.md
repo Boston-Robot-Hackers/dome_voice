@@ -2,6 +2,12 @@
 
 Completed work moved out of `current.md`, newest first.
 
+## 2026-11-20 — LLM spike runs; speech streams; speech config in voice.yaml
+
+- **F12 spike, T01–T03:** robot mic → `/voice/utterance` → VM (faster-whisper `base.en`, Claude) → `/voice/llm_reply` → robot relay → `/announcement`. Works end to end. The spike then switched from Opus to `claude-haiku-5-5` for latency.
+- **Chore: `speech_output` streams Piper** (`--output_raw` into `aplay -t raw`, gain in numpy). First audio on a two-sentence reply: about 1.3 s, where the WAV path took about 2.2 s.
+- **F13:** speech gain, length scale and device moved into `voice.yaml` under `speech:`. The launch's `ENV_FALLBACKS` and speech arguments are gone. The gain went from 0.25 to 0.5.
+
 ## 2026-11-19 — Voice works on the robot
 
 ### Plan and features

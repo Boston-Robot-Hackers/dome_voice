@@ -13,8 +13,11 @@ Bug fixes and refactors with no spec or behaviour change. Each bug fix gets a re
 - [x] I02: speech reaches Vosk at −30 to −40 dBFS, too quiet for the small model, and the PGA can't go above 30 dB without muting. Add `stt_gain_db` (robot: 10), applied to Vosk's input only. Replay of 7 recorded turns: 3/7 → 7/7 with the beep skip. Regression test.
 - [x] I02: the wake beep is in the first ~0.4 s of the command capture, sets `command_started`, and hurts recognition. Skip the beep's duration (`beep_wake_duration`) plus start-up latency before capture. Regression test.
 - [ ] Split `runtime.py` (755 lines): config models, audio input, and the turn loop into separate modules. Keep the public API in `__init__.py`.
-- [ ] `speech_output`: replace the per-sample `struct` gain loop with numpy.
+- [x] `speech_output`: replace the per-sample `struct` gain loop with numpy. Done as part of the streaming change below.
 - [ ] `__pycache__/*.pyc` files are tracked in git, so every test run dirties the tree. `git rm -r --cached` them; `.gitignore` (or the global one) should cover `__pycache__/`.
 - [x] `speech_output`'s announcement callback caught bare `Exception`. Narrowed to the errors `speak_text` raises (RuntimeError, ValueError, OSError, CalledProcessError).
 - [x] `ruff format` rewrote Python excerpts in `01-literate/*.md` and changed one's meaning. Added `ruff.toml` excluding `01-literate/`.
 - [ ] `beep()` now raises on aplay failure, and `voice_input` calls it with no handler, so a busy device (an announcement on `plughw:0,0` at the same moment) stops the voice loop. Catch `RuntimeError` at the node's beep calls (one helper for all four) and log it. Regression test.
+- [x] `speech_output` streams Piper's raw output into `aplay` instead of rendering a whole WAV first, so speech starts after the first sentence. Measured on a two-sentence reply: first audio at 1.3 s, where the WAV path took about 2.2 s. Most of what's left is Piper loading its model on each reply. Tests use real subprocesses: scaling, odd-byte carry, and failure of either process (found in the F12 spike, 2026-11-20).
+- [ ] `speech_output`: keep one Piper process running instead of starting one per announcement, saving about 1 s of model load each time. This needs a way to tell where one utterance's raw audio ends.
+- [ ] `beep()` still reads `SPEECH_ALSA_DEVICE`, which nothing sets any more: F13 moved speech's device into `voice.yaml` and removed it from the launch. So beeps play on ALSA's default device. Give `beep()` its device from the YAML (TF08 plans `playback_card`).

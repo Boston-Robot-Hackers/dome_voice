@@ -20,8 +20,16 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 ### In progress: F12 (LLM loop spike)
 
 - **The code is in `spikes/llm_loop/`**, and `README.md` there has the setup and run steps.
-- **T01 and T03 are done.** T02's code and unit tests are done; next is the first VM run: start `vm_llm_node.py`, then replay a WAV with `publish_wav.py`.
-- **Then T04:** about 10 live exchanges, with findings and a go/no-go written into F12.
+- **T01–T03 work end to end** (2026-11-20): robot mic → VM (faster-whisper, Claude) → robot speech. The VM is at `/home/pitosalas/ros2_ws/src/dome_voice` too.
+- **Measured:** Whisper 0.3 s, Opus 1.4–1.8 s, Piper about 3 s before the first word. Since then the spike uses `claude-haiku-5-5`, and `speech_output` streams Piper (first word at about 1.3 s). Not yet re-measured end to end.
+- **VM gotchas, now in the spike README:** Ubuntu's apt `brotli` 1.1 breaks the SDK ("Connection error"), so install `brotli>=1.2`; and the API account needs credit, separate from a Claude.ai plan.
+- **Next, T04:** about 10 live exchanges, with findings and a go/no-go written into F12.
+
+### Done: F13 (speech settings in voice.yaml)
+
+- **`speech_output` reads `speech:` from `voice.yaml`**: gain (now 0.5), length scale, device. It takes the YAML as its `config` parameter, like `voice_input`. Only the Piper paths stay in the environment.
+- **The launch has no arguments now**, and `SPEECH_GAIN`, `PIPER_LENGTH_SCALE` and `SPEECH_ALSA_DEVICE` are no longer read.
+- **Outside this repo:** dome2's `TF05-launch-file-cleanup.md` still describes the old speech environment variables.
 
 ### Paused: F05 (record and replay)
 
@@ -62,7 +70,7 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - `intent_mapper.py` — `IntentMapper` and `command_words()`: 8 commands (stop, right, left, explore → `exploration_start`, describe, objects, status, help). The grammar is derived from this table.
 - `audio_feedback.py` — `beep()` via aplay; raises when aplay fails.
 - `voice_input_node.py`, `speech_output_node.py` — the ROS nodes.
-- `test/` — 84 passed, 3 failed (I01's `voice_input_node` tests).
+- `test/` — 99 passed, 3 failed (I01's `voice_input_node` tests). `spikes/llm_loop/` has 12 more.
 - `01-literate/` — literate docs.
 
 ## Known Issues

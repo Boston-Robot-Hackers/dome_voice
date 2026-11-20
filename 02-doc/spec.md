@@ -76,7 +76,7 @@ from dome_voice import (
 ## Configuration
 
 - **`voice_input`**: defaults live once in `runtime.py`'s `VoiceConfigFile` (strict pydantic). `config/voice.yaml` overrides only the keys it names (F02). `robot.launch.py` passes it as the `config` parameter. No environment variables.
-- **`speech_output`**: configured by environment variables set in `robot.launch.py` (dome2 F05). *Should move to the same YAML pattern;* not yet a feature.
+- **`speech_output`**: the `speech:` section of the same `config/voice.yaml` (gain, length scale, playback device), passed as the same `config` parameter (F13). Only the Piper install paths, `DOME_PIPER_BIN` and `DOME_PIPER_MODEL_PATH`, come from the environment.
 
 ## Dependencies
 

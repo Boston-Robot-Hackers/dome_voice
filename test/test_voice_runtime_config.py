@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # test_voice_runtime_config — voice config: defaults, YAML layering, overrides
 # Author: Pito Salas and Claude Code
-# Version: 2
+# Version: 3
 # Created: 2026-11-19
-# Updated: 2026-11-19
+# Updated: 2026-11-20
 # Open Source Under MIT license
 """The voice config has one set of defaults, and a YAML overrides only its keys."""
 
@@ -15,7 +15,7 @@ import pytest
 from pydantic import ValidationError
 
 from dome_voice.intent_mapper import command_words
-from dome_voice.runtime import load_voice_runtime_config
+from dome_voice.runtime import load_speech_settings, load_voice_runtime_config
 
 REPO = Path(__file__).resolve().parent.parent
 ROBOT_YAML = REPO / "config" / "voice.yaml"
@@ -160,3 +160,61 @@ def test_robot_yaml_matches_the_baseline():
     cfg.pop("source_path")
     cfg.pop("vosk_model_path")
     assert cfg == json.loads(BASELINE.read_text())
+
+
+def test_speech_defaults_with_an_empty_yaml(tmp_path):
+    speech = load_speech_settings(write_yaml(tmp_path, ""))
+    assert (speech.gain, speech.length_scale, speech.alsa_device) == (
+        0.25,
+        1.0,
+        "plughw:0,0",
+    )
+
+
+def test_partial_speech_section_overrides_only_its_keys(tmp_path):
+    speech = load_speech_settings(write_yaml(tmp_path, "speech:\n  gain: 0.7\n"))
+    assert (speech.gain, speech.length_scale) == (0.7, 1.0)
+
+
+def test_empty_alsa_device_means_alsa_default(tmp_path):
+    path = write_yaml(tmp_path, 'speech:\n  alsa_device: ""\n')
+    assert load_speech_settings(path).alsa_device == ""
+
+
+@pytest.mark.parametrize("key, value", [("gain", "0"), ("length_scale", "-1")])
+def test_speech_values_must_be_positive(tmp_path, key, value):
+    path = write_yaml(tmp_path, f"speech:\n  {key}: {value}\n")
+    with pytest.raises(ValueError, match=key):
+        load_speech_settings(path)
+
+
+def test_unknown_speech_key_raises(tmp_path):
+    with pytest.raises(ValueError, match="volume"):
+        load_speech_settings(write_yaml(tmp_path, "speech:\n  volume: 1\n"))
+
+
+def test_speech_loader_rejects_bad_keys_elsewhere_in_the_file(tmp_path):
+    path = write_yaml(tmp_path, "stream_settings:\n  treshold: 0.4\n")
+    with pytest.raises(ValueError, match="treshold"):
+        load_speech_settings(path)
+
+
+def test_speech_loader_missing_file_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        load_speech_settings(tmp_path / "missing.yaml")
+
+
+def test_speech_does_not_change_the_voice_input_config(tmp_path):
+    path = write_yaml(tmp_path, "speech:\n  gain: 0.9\n")
+    assert load_voice_runtime_config(path) == replace(
+        load_voice_runtime_config(), source_path=str(path)
+    )
+
+
+def test_robot_yaml_speech_section():
+    speech = load_speech_settings(ROBOT_YAML)
+    assert (speech.gain, speech.length_scale, speech.alsa_device) == (
+        0.5,
+        1.0,
+        "plughw:0,0",
+    )

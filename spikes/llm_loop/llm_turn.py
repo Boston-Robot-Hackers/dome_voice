@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 RATE = 16000  # Hz, the robot mic rate
-MODEL = "claude-opus-5-5"
+MODEL = "claude-haiku-5-5"  # fastest; replies are one or two sentences
 MAX_TOKENS = 4000
 SYSTEM_PROMPT = (
     "You are the voice of a small indoor robot named Marvin. What you write is "
@@ -58,13 +58,11 @@ class Conversation:
         request leaves it alternating user/assistant. API errors propagate.
         """
         user_message = {"role": "user", "content": user_text}
-        response = self.client.beta.messages.create(
+        response = self.client.messages.create(
             model=self.model,
             max_tokens=MAX_TOKENS,
             system=SYSTEM_PROMPT,
             output_config={"effort": "low"},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
             messages=[*self.messages, user_message],
         )
         if response.stop_reason == "refusal":

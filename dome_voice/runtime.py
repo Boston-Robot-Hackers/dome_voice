@@ -103,6 +103,14 @@ class BeepSettings(StrictModel):
     fail_volume: float = Field(1.0, ge=0.0, le=1.0)
 
 
+class SpeechSettings(StrictModel):
+    """speech_output's settings; the Piper paths stay in the environment (F13)."""
+
+    gain: float = Field(0.25, gt=0.0)  # Piper peaks at full scale, so > 1.0 clips
+    length_scale: float = Field(1.0, gt=0.0)  # above 1.0 speaks slower
+    alsa_device: str = "plughw:0,0"  # "" = ALSA's default device
+
+
 class VoiceConfigFile(StrictModel):
     """The voice YAML's shape, and the only place voice defaults are written.
 
@@ -116,6 +124,7 @@ class VoiceConfigFile(StrictModel):
     stream_settings: StreamSettings = Field(default_factory=StreamSettings)
     sox_chain: SoxChain = Field(default_factory=SoxChain)
     beep: BeepSettings = Field(default_factory=BeepSettings)
+    speech: SpeechSettings = Field(default_factory=SpeechSettings)
 
     def to_runtime_config(self, source_path: str) -> "VoiceRuntimeConfig":
         beeps = {f"beep_{k}": v for k, v in self.beep.model_dump().items()}
@@ -386,6 +395,16 @@ def load_voice_runtime_config(
         if value is not None:
             set_flat_key(file_data, key, value)
     return VoiceConfigFile.model_validate(file_data).to_runtime_config(source_path)
+
+
+def load_speech_settings(path: str | os.PathLike[str]) -> SpeechSettings:
+    """speech_output's settings from the voice YAML: the defaults, then the file.
+
+    Goes through the whole `VoiceConfigFile`, so a bad key anywhere in the
+    file fails here too, not only when voice_input loads it.
+    """
+    file_data = read_yaml(Path(path).expanduser())
+    return VoiceConfigFile.model_validate(file_data).speech
 
 
 def set_flat_key(file_data: dict[str, Any], key: str, value: Any) -> None:

@@ -46,7 +46,7 @@ if result.returncode != 0:
     raise RuntimeError(f"beep: aplay failed ({result.returncode}): ...")
 ```
 
-The raw PCM goes to `aplay` on stdin, so no file is written. The device comes from **`$SPEECH_ALSA_DEVICE`**, the same variable speech output uses, so beeps and speech come out of the same speaker.
+The raw PCM goes to `aplay` on stdin, so no file is written. The device comes from **`$SPEECH_ALSA_DEVICE`**. Speech output used to read the same variable; since F13 it takes its device from `voice.yaml` instead, so the two can now differ. TF08 plans to move beeps to `playback_card`.
 
 **The call blocks** until the beep finishes, so command capture starts only after the "I'm listening" beep has played.
 

@@ -15,7 +15,7 @@ robot  speech_output      /announcement → Piper → speaker
 
 ## Files
 
-All in `/home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/` on the robot:
+All in `/home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/`, which is the same path on the robot and the VM:
 
 - `robot_mic_pub.py`: the robot side (mic and relay).
 - `spike_capture.py`: captures until silence; used by `robot_mic_pub.py`.
@@ -34,17 +34,17 @@ ros2 topic list | grep /voice/utterance
 
 **2. ROS 2.** Use the same distro as the robot (kilted) if you can.
 
-**3. The code.** The VM needs only `vm_llm_node.py` and `llm_turn.py`. Get them by cloning the repo once the spike is pushed:
+**3. The code.** The VM needs only `vm_llm_node.py` and `llm_turn.py`. Clone the repo into the VM's workspace, the same place as on the robot (to update it later, run `git pull` in that directory):
 
 ```bash
-git clone git@github.com:Boston-Robot-Hackers/dome_voice.git ~/dome_voice
+git clone git@github.com:Boston-Robot-Hackers/dome_voice.git /home/pitosalas/ros2_ws/src/dome_voice
 ```
 
 or by copying them from the robot:
 
 ```bash
-mkdir -p ~/dome_voice/spikes/llm_loop
-scp pitosalas@dome-R1:/home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/{vm_llm_node.py,llm_turn.py} ~/dome_voice/spikes/llm_loop/
+mkdir -p /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop
+scp pitosalas@dome-R1:/home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/{vm_llm_node.py,llm_turn.py} /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/
 ```
 
 If the VM can't resolve `dome-R1`, use the robot's IP address, which was `192.168.4.100` on 2026-11-20.
@@ -52,8 +52,12 @@ If the VM can't resolve `dome-R1`, use the robot's IP address, which was `192.16
 **4. Python packages.** On Ubuntu 24.04, add `--break-system-packages`:
 
 ```bash
-pip install --user faster-whisper anthropic
+pip install --user faster-whisper anthropic "brotli>=1.2"
 ```
+
+**The `brotli` upgrade matters.** Ubuntu's apt `brotli` (1.1) is too old for the SDK's HTTP client. Every API reply then fails to decompress, and the SDK reports a misleading `Connection error`. Check what loads with `python3 -c "import brotli; print(brotli.__version__, brotli.__file__)"`. It should be 1.2 or later, from `~/.local`.
+
+**The API account needs credit.** API billing is separate from a Claude.ai subscription. Buy credits at console.anthropic.com → Plans & Billing, or you get `400 ... credit balance is too low`.
 
 **5. The API key.** Get one at console.anthropic.com, then add this to the VM's `~/.bashrc`:
 
@@ -63,22 +67,24 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ## Each run
 
-**Robot, terminal A: speech output.** Stop `robot.launch.py` first if it is running. This starts `speech_output` with the same settings the launch gives it:
+**Robot, terminal A: speech output.** Stop `robot.launch.py` first if it is running. This starts `speech_output` alone, with the same installed `voice.yaml` the launch gives it. The volume is `speech: gain:` in that file (F13):
 
 ```bash
 source /home/pitosalas/ros2_ws/install/setup.bash
-SPEECH_ALSA_DEVICE=plughw:0,0 SPEECH_GAIN=0.25 PIPER_LENGTH_SCALE=1.0 \
-  ros2 run dome_voice speech_output
+ros2 run dome_voice speech_output --ros-args \
+  -p config:=/home/pitosalas/ros2_ws/install/dome_voice/share/dome_voice/config/voice.yaml
 ```
+
+To change the volume, edit `/home/pitosalas/ros2_ws/src/dome_voice/config/voice.yaml`, run `colcon build --packages-select dome_voice` in `/home/pitosalas/ros2_ws`, and restart this node.
 
 **VM: the LLM node.** The first run downloads the Whisper model (about 150 MB):
 
 ```bash
 source /opt/ros/kilted/setup.bash
-python3 ~/dome_voice/spikes/llm_loop/vm_llm_node.py
+python3 /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/vm_llm_node.py
 ```
 
-Wait for `Ready: Whisper 'base.en', Claude 'claude-opus-5-5'`.
+Wait for `Ready: Whisper 'base.en', Claude 'claude-haiku-5-5'`.
 
 **Robot, terminal B: mic and relay.**
 

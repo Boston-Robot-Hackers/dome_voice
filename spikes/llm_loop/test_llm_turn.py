@@ -30,7 +30,7 @@ class FakeMessages:
 
 def fake_client(*responses):
     messages = FakeMessages(responses)
-    return SimpleNamespace(beta=SimpleNamespace(messages=messages)), messages
+    return SimpleNamespace(messages=messages), messages
 
 
 def response(text: str, stop_reason: str = "end_turn"):
@@ -56,7 +56,8 @@ def test_ask_returns_text_and_keeps_full_content_in_history():
     assert conversation.ask("hi") == "Hello there."
     assert conversation.messages[0] == {"role": "user", "content": "hi"}
     assert conversation.messages[1]["content"][0].type == "thinking"
-    assert messages.calls[0]["fallbacks"] == "default"
+    assert messages.calls[0]["model"] == "claude-haiku-5-5"
+    assert messages.calls[0]["output_config"] == {"effort": "low"}
 
 
 def test_second_turn_sends_history():

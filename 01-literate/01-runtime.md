@@ -1,6 +1,6 @@
 ---
-version: "2.3"
-generated: "2026-11-19"
+version: "2.4"
+generated: "2026-11-20"
 ---
 
 # 01 — `runtime.py`: The Voice Pipeline
@@ -55,7 +55,7 @@ The config follows the pattern used across the DOME stack (dome_vision, dome_sem
 
 ### Two classes, two jobs
 
-- **`VoiceConfigFile`** is a strict pydantic model with the YAML's nested shape: `capture_card`, `playback_card`, `stream_settings`, `sox_chain`, `beep`. It holds **the only defaults**, and it validates: ranges such as `0 ≤ threshold ≤ 1`, and types. A YAML that still names `stream_settings.grammar` is rejected with a message saying the grammar is now derived from `intent_mapper.PHRASE_INTENTS` (F03).
+- **`VoiceConfigFile`** is a strict pydantic model with the YAML's nested shape: `capture_card`, `playback_card`, `stream_settings`, `sox_chain`, `beep`, `speech`. It holds **the only defaults**, and it validates: ranges such as `0 ≤ threshold ≤ 1`, and types. A YAML that still names `stream_settings.grammar` is rejected with a message saying the grammar is now derived from `intent_mapper.PHRASE_INTENTS` (F03).
 - **`VoiceRuntimeConfig`** is a flat frozen dataclass with **no defaults**. It is what the runtime and node read (`config.threshold`, `config.beep_fail_freq`). It is built only by `VoiceConfigFile.to_runtime_config`.
 
 Keeping the flat dataclass meant no call site had to change, and tests can still derive variants with `dataclasses.replace`.
@@ -78,6 +78,25 @@ class StrictModel(BaseModel):
 3. **Validate the whole thing once**, so a bad override fails exactly like a bad YAML value.
 
 **A named file that doesn't exist raises.** Running silently on the defaults would hide a wrong path.
+
+### The `speech:` section belongs to the other node
+
+Since F13 (2026-11-20), one YAML configures **both** voice nodes. The `speech:` section, with `gain`, `length_scale` and `alsa_device`, is read by `speech_output`, not by the runtime:
+
+```python
+class SpeechSettings(StrictModel):
+    gain: float = Field(0.25, gt=0.0)  # Piper peaks at full scale, so > 1.0 clips
+    length_scale: float = Field(1.0, gt=0.0)  # above 1.0 speaks slower
+    alsa_device: str = "plughw:0,0"  # "" = ALSA's default device
+
+def load_speech_settings(path) -> SpeechSettings:
+    file_data = read_yaml(Path(path).expanduser())
+    return VoiceConfigFile.model_validate(file_data).speech
+```
+
+- **It lives in `VoiceConfigFile`**, so the file has one schema and a misspelled speech key fails like any other.
+- **`load_speech_settings` validates the whole file**, not just its section. A typo in `stream_settings` therefore stops `speech_output` as well as `voice_input`. That's deliberate: a file that is half-wrong shouldn't half-work.
+- **`to_runtime_config` ignores it**, so `VoiceRuntimeConfig` and the F02 baseline are unchanged.
 
 ### Small conveniences
 
