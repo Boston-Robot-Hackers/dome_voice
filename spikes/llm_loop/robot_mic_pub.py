@@ -5,6 +5,8 @@ robot_mic_pub.py — robot side of the F12 spike: mic → /voice/utterance, /voi
 Author: Pito Salas and Claude Code
 Open Source Under MIT license
 
+It listens for its own wake word (`--wake-word`), not the fixed grammar's.
+
 Each utterance is published as one `std_msgs/UInt8MultiArray`: int16
 little-endian mono PCM at 16 kHz. The VM node transcribes it and answers on
 `/voice/llm_reply` as a plain `std_msgs/String`; this node relays that to
@@ -15,11 +17,12 @@ The mic loop blocks, so it runs on the main thread and ROS callbacks spin
 on a daemon thread. Run this instead of `voice_input`, because the mic can
 only be opened once.
 
-    python3 spikes/llm_loop/robot_mic_pub.py [--config config/voice.yaml]
+    python3 spikes/llm_loop/robot_mic_pub.py [--config FILE] [--wake-word NAME]
 """
 
 import argparse
 import array
+import dataclasses
 import threading
 import time
 from pathlib import Path
@@ -44,11 +47,17 @@ from dome_voice.runtime import (
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "voice.yaml"
 TOPIC = "/voice/utterance"
 REPLY_TOPIC = "/voice/llm_reply"
+DEFAULT_WAKE_WORD = "hey_jarvis"  # stands in for "hey robbie"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    parser.add_argument(
+        "--wake-word",
+        default=DEFAULT_WAKE_WORD,
+        help="openWakeWord model name, or an absolute .onnx path",
+    )
     return parser.parse_args()
 
 
@@ -125,7 +134,9 @@ def spin_until_shutdown(executor: SingleThreadedExecutor) -> None:
 
 def main() -> None:
     args = parse_args()
-    config = load_voice_runtime_config(args.config)
+    config = dataclasses.replace(
+        load_voice_runtime_config(args.config), wake_word=args.wake_word
+    )
     rclpy.init()
     node = Node("llm_spike_mic")
     publisher = node.create_publisher(UInt8MultiArray, TOPIC, 10)

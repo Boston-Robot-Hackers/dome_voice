@@ -25,6 +25,7 @@ robot: /voice/llm_reply → /announcement → speech_output (Piper) → speaker
 
 - **The VM transcribes.** The robot sends raw audio: 16 kHz mono int16, as `std_msgs/UInt8MultiArray` on `/voice/utterance`. The audio gets `stt_gain_db`, because the mic is quiet (I02).
 - **The robot side reuses the runtime's wake and capture helpers** (`wait_for_wake`, `read_mono_chunk`, the silence cutoff). Vosk is not used.
+- **The spike has its own wake word**, apart from the fixed grammar's "hey marvin". **"hey robbie" is the goal**; it needs a custom openWakeWord model (TF12 T06). Until then `hey_jarvis` stands in.
 - **STT is faster-whisper** (`base.en`), local on the VM. It's one pip install, and the model downloads on first run.
 - **The LLM is Claude**, through the `anthropic` Python SDK. It is the easiest to set up: one pip install and an API key, with no model to download and no GPU. It uses `claude-haiku-5-5` at low effort, the fastest model, since replies are one or two sentences (switched from `claude-opus-5-5` on 2026-11-20; Opus took 1.4–1.8 s per reply). Haiku has no server-side refusal fallback, so a refusal gets a fixed spoken reply. It keeps the conversation history, and is told to answer in one or two short spoken sentences.
 - **Transport is plain ROS 2 topics.** The robot and the VM share a network and a `ROS_DOMAIN_ID`.
@@ -40,7 +41,7 @@ robot: /voice/llm_reply → /announcement → speech_output (Piper) → speaker
 
 **Steps**:
 1. On the robot, run `python3 /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/robot_mic_pub.py`.
-2. Say "hey marvin", wait for the beep, then ask an open question ("what's the tallest mountain in Europe?").
+2. Say "hey jarvis", wait for the beep, then ask an open question ("what's the tallest mountain in Europe?").
 3. Wait for the robot to speak.
 
 **Expected output**: The robot speaks a short, relevant answer. The VM node logs the transcript, the reply, and the time for each stage (STT, LLM).

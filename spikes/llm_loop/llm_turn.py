@@ -22,7 +22,7 @@ RATE = 16000  # Hz, the robot mic rate
 MODEL = "claude-haiku-5-5"  # fastest; replies are one or two sentences
 MAX_TOKENS = 4000
 SYSTEM_PROMPT = (
-    "You are the voice of a small indoor robot named Marvin. What you write is "
+    "You are the voice of a small indoor robot named Robbie. What you write is "
     "spoken aloud by a text-to-speech engine, so answer in one or two short, "
     "plain sentences. No lists, markdown, emoji, or symbols. The user's words "
     "come from speech recognition and may contain errors; if a request is "

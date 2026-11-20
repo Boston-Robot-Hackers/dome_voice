@@ -93,7 +93,9 @@ source /home/pitosalas/ros2_ws/install/setup.bash
 python3 /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/robot_mic_pub.py
 ```
 
-**Talk.** Say "hey marvin", wait for the beep, then ask something.
+**Talk.** Say "hey jarvis", wait for the beep, then ask something.
+
+- The spike has its own wake word, so it never answers "hey marvin". `--wake-word` takes an openWakeWord model name or an absolute `.onnx` path; the default `hey_jarvis` stands in until a "hey robbie" model exists.
 
 - The VM logs `Heard (...)` and `Reply (...)`, with the STT and LLM times.
 - Robot terminal B logs `Speaking reply: ...`, and the robot speaks.

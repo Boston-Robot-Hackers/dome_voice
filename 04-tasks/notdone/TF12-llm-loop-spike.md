@@ -22,8 +22,20 @@ Run the tests with `python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/spi
 
 **Test**: none, since this is documentation.
 
+## T05 — A wake word of its own (do before T04)
+**Status**: done
+**Description**: The spike listens for its own wake word, so the LLM path and the fixed grammar ("hey marvin") stay apart. `robot_mic_pub.py` takes `--wake-word`, by default `hey_jarvis`, which stands in until a "hey robbie" model exists (T06). The system prompt calls the robot Robbie.
+
+**Test**: manual, because the script needs ROS and the mic. Start `robot_mic_pub.py` and check that it logs `Listening for 'hey_jarvis'`, that "hey jarvis" wakes it, and that "hey marvin" doesn't.
+
 ## T04 — Try it and record findings
 **Status**: not done
 **Description**: Run about 10 real exchanges. Record the end-to-end latency, the STT and LLM times, transcript errors, and whether the robot heard its own reply. Write the findings and a go/no-go recommendation at the bottom of F12.
 
 **Test**: manual. The findings are the result.
+
+## T06 — Train a "hey robbie" wake model
+**Status**: not done
+**Description**: openWakeWord ships no "hey robbie" model. Train one with its training notebook (synthetic Piper clips, on a free Colab GPU). Install the `.onnx` on the robot, and pass its absolute path as `--wake-word`.
+
+**Test**: manual. Record how often it wakes on "hey robbie", and how often it false-wakes on ordinary talk and on "hey marvin", next to `hey_jarvis` under the same conditions.

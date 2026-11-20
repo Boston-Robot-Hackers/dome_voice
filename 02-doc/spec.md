@@ -1,12 +1,14 @@
 # dome_voice — Spec
 
-**Version 2** (2026-11-19). Rewritten after a review of the package against newer voice techniques and the robot's hardware. Requirements marked *(planned, Fnn)* are not built yet.
+**Version 3** (2026-11-20). Allows offboard processing case by case, and plans an LLM command path next to the fixed grammar. Version 2 (2026-11-19) followed a review of the package against newer voice techniques and the robot's hardware. Requirements marked *(planned, Fnn)* are not built yet.
 
 ## Purpose
 
 dome_voice gives the robot a spoken interface: it hears commands and turns them into `/intent` messages, and it speaks `/announcement` messages aloud.
 
-It runs **entirely on the robot** (Raspberry Pi 5, 16 GB), offline. A cloud service may be added later for open-ended speech, but never on the path that stops the robot.
+**Where it runs:** on the robot (Raspberry Pi 5, 16 GB) by default. **Parts may run offboard** (the VM, or a cloud API), decided case by case in each feature.
+
+**The stop path always runs on the robot**, offline, with no STT and no LLM in it.
 
 ## Structure
 
@@ -92,5 +94,7 @@ from dome_voice import (
 
 ## Direction, not yet features
 
-- **Open-vocabulary speech** (an open STT from F11's comparison, plus an LLM for intent) only after F03–F11, and only if the fixed grammar plus runtime names proves too limiting. A local 1–1.5B model costs about 1–2 s per intent on the Pi; a cloud LLM needs network. Neither may sit on the stop path.
+- **An LLM path runs next to the fixed grammar, not instead of it.** An open STT (Whisper) plus an LLM turns speech into `/intent` messages or a spoken reply, and may run offboard. **The fixed-grammar path stays**, because other uses may need it. F12, a spike, decides whether to go ahead; a feature will follow if it does.
+- **Each path has its own wake word:** "hey marvin" for the fixed grammar, and "hey robbie" planned for the LLM.
+- **With no network, the LLM path says it is offline.** The fixed-grammar path and the stop phrase (F07) keep working, because neither depends on the network.
 - **Barge-in** (interrupting the robot mid-sentence) needs echo cancellation, which needs the mic array (F08).

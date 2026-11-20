@@ -23,7 +23,12 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - **T01–T03 work end to end** (2026-11-20): robot mic → VM (faster-whisper, Claude) → robot speech. The VM is at `/home/pitosalas/ros2_ws/src/dome_voice` too.
 - **Measured:** Whisper 0.3 s, Opus 1.4–1.8 s, Piper about 3 s before the first word. Since then the spike uses `claude-haiku-5-5`, and `speech_output` streams Piper (first word at about 1.3 s). Not yet re-measured end to end.
 - **VM gotchas, now in the spike README:** Ubuntu's apt `brotli` 1.1 breaks the SDK ("Connection error"), so install `brotli>=1.2`; and the API account needs credit, separate from a Claude.ai plan.
+- **The spike has its own wake word now (T05):** `robot_mic_pub.py --wake-word`, default `hey_jarvis`, until a "hey robbie" model is trained (T06). The prompt calls the robot Robbie.
+- **Spec v3 (2026-11-20):** offboard parts are allowed case by case, and the LLM path runs next to the fixed grammar, which stays.
 - **Next, T04:** about 10 live exchanges, with findings and a go/no-go written into F12.
+- **Before T04, restart both ends** so they pick up c1f2647 and T05 (not yet committed):
+  - VM: `cd /home/pitosalas/ros2_ws/src/dome_voice && git pull`, then rerun `python3 /home/pitosalas/ros2_ws/src/dome_voice/spikes/llm_loop/vm_llm_node.py`.
+  - Robot: `ros2 run dome_voice speech_output --ros-args -p config:=/home/pitosalas/ros2_ws/install/dome_voice/share/dome_voice/config/voice.yaml`, plus `spikes/llm_loop/robot_mic_pub.py`.
 
 ### Done: F13 (speech settings in voice.yaml)
 
