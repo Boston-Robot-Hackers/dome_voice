@@ -1,5 +1,5 @@
 ---
-version: "2.1"
+version: "2.3"
 generated: "2026-11-19"
 ---
 
@@ -34,14 +34,14 @@ flowchart TD
 Three constants define the stream everything else assumes:
 
 ```python
-RATE = 16000
+RATE = 16000          # imported from turn_recorder
 CHUNK = 1280
-WAKE_SKIP_CHUNKS = 1
+WAKE_SKIP_CHUNKS = 2  # wake word tail and aplay start-up, on top of the beep itself
 ```
 
 - **16 kHz** is what both openWakeWord and Vosk's small English model expect.
 - **1280 samples is 80 ms**, the frame size openWakeWord is built around. Every loop in this file works in these 80 ms steps, so durations in the config are turned into chunk counts.
-- **`WAKE_SKIP_CHUNKS`** throws away one chunk after the wake, presumably the tail of the wake word. It is much shorter than the 0.3 s wake beep that plays in between (chapter X01).
+- **`WAKE_SKIP_CHUNKS`** is part of the skip after the wake; see *Skipping the wake beep* below.
 
 ## Configuration: defaults once, YAML on top
 
@@ -55,7 +55,7 @@ The config follows the pattern used across the DOME stack (dome_vision, dome_sem
 
 ### Two classes, two jobs
 
-- **`VoiceConfigFile`** is a strict pydantic model with the YAML's nested shape: `capture_card`, `playback_card`, `stream_settings`, `sox_chain`, `beep`. It holds **the only defaults**, and it validates: ranges such as `0 ≤ threshold ≤ 1`, types, and an empty grammar.
+- **`VoiceConfigFile`** is a strict pydantic model with the YAML's nested shape: `capture_card`, `playback_card`, `stream_settings`, `sox_chain`, `beep`. It holds **the only defaults**, and it validates: ranges such as `0 ≤ threshold ≤ 1`, and types. A YAML that still names `stream_settings.grammar` is rejected with a message saying the grammar is now derived from `intent_mapper.PHRASE_INTENTS` (F03).
 - **`VoiceRuntimeConfig`** is a flat frozen dataclass with **no defaults**. It is what the runtime and node read (`config.threshold`, `config.beep_fail_freq`). It is built only by `VoiceConfigFile.to_runtime_config`.
 
 Keeping the flat dataclass meant no call site had to change, and tests can still derive variants with `dataclasses.replace`.
@@ -82,7 +82,6 @@ class StrictModel(BaseModel):
 ### Small conveniences
 
 - `none`, `None` and `""` mean "no value" for `silence_dbfs` and the two cutoffs.
-- The grammar accepts a list or one comma-separated string.
 
 ### Where tuning goes
 
@@ -97,9 +96,20 @@ The old in-code table had 0.7 and 3, tuned for `alexa`. The robot never ran with
 ```python
 def open_arecord(card: int) -> subprocess.Popen:
     return subprocess.Popen(
-        ["arecord", "-q", "-D", f"hw:{card},0",
-         "-f", "S16_LE", "-r", str(RATE), "-c", "2"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        [
+            "arecord",
+            "-q",
+            "-D",
+            f"hw:{card},0",
+            "-f",
+            "S16_LE",
+            "-r",
+            str(RATE),
+            "-c",
+            "2",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         bufsize=CHUNK * 4,
     )
 ```
@@ -114,16 +124,24 @@ def read_mono_chunk(stream, n_samples=CHUNK, live_filter=None):
     if len(raw) < n_samples * 4:
         return None
     stereo = np.frombuffer(raw, dtype=np.int16).reshape(-1, 2)
-    mono = stereo.mean(axis=1).astype(np.float32)
-    mono -= float(np.mean(mono))
-    ...
+    chunk = stereo.mean(axis=1).astype(np.int16)
+    if live_filter:
+        chunk = live_filter.process(chunk)
+    return chunk
 ```
 
-Three steps, each with a reason:
+Two steps, each with a reason:
 
 - **A short read returns `None`.** That means the stream ended (arecord died, or a test's fake stream ran dry). Every loop treats `None` as "stop".
 - **Averaging the two microphones** gives a little noise reduction for free, because uncorrelated noise partly cancels.
-- **Subtracting the chunk's mean removes DC offset**, a constant bias some ADCs add. Left in, it would inflate every loudness reading.
+
+### Why DC is not removed here
+
+The codec adds a **DC offset**, a slowly drifting constant bias. It must go, or it inflates every loudness reading. But **it must not be removed per chunk.**
+
+An earlier version subtracted each chunk's own mean. Each chunk's mean differs a little, so the signal *stepped* at every 80 ms boundary. A step is broadband, so the highpass passed it straight through as an audible **tick, 12.5 times a second**, fed to the wake model and Vosk alike. On the robot, the sample-to-sample jump at boundaries was about 20× the mid-chunk jump (1078 vs 53); after the fix the two match.
+
+**DC removal is the highpass's job**, because it carries state across chunks. This is the general rule for streaming audio: *any per-block operation that depends on the block's own statistics creates block-edge artifacts.* With `live_filter: false`, DC passes through unchanged.
 
 ### The live bandpass filter
 
@@ -216,6 +234,19 @@ The loop also stops if `ok_fn()` goes false (ROS shutting down), the optional ti
 
 ## Phase 2: capturing the command
 
+### Skipping the wake beep
+
+The node plays a beep when the wake word fires, while arecord keeps recording. The mic hears the beep, and it is the loudest thing in the turn. Left in, it set `command_started` before anyone spoke, and 1 s of "silence" then ended the turn. Recordings from the robot showed it plainly (I02).
+
+```python
+def wake_skip_chunks(config: VoiceRuntimeConfig) -> int:
+    return WAKE_SKIP_CHUNKS + math.ceil(config.beep_wake_duration * RATE / CHUNK)
+```
+
+- **The skip follows the beep's configured length**, plus two chunks for the end of "hey marvin" and aplay's start-up delay.
+- **The beep is now 0.1 s**, so the skip is 4 chunks (320 ms). At 0.3 s it was 480 ms, long enough to cut off the start of a quick "explore".
+- **This is a stopgap.** F04 (don't listen while the robot makes sound) and F10 (continuous listening) replace it.
+
 ### A grammar-constrained recogniser
 
 ```python
@@ -225,7 +256,19 @@ rec = vosk_module.KaldiRecognizer(stt_model, RATE, grammar_json)
 
 Vosk is a Kaldi-based recogniser. Given a grammar, it can **only** output those words, or `[unk]` for anything else. A free-form model would happily hear "stop" as "top" or "shop"; this one can't.
 
-The grammar has to contain every word `intent_mapper` looks for. `DEFAULT_GRAMMAR` and `PHRASE_INTENTS` are kept in step by hand.
+The grammar has to contain every word `intent_mapper` looks for, so it is derived from that table: `config.grammar` is `intent_mapper.command_words()`.
+
+### Gain for Vosk only
+
+```python
+endpoint = rec.AcceptWaveform(apply_gain(cmd_chunk, config.stt_gain_db).tobytes())
+```
+
+**Speech reached Vosk at −30 to −45 dBFS, too quiet for its small model.** More analog gain isn't available: above 30 dB the board's input saturates and mutes (I02). So `stt_gain_db` (20 dB on the robot) scales the audio *after* the filter, clipped to int16.
+
+- **Only Vosk gets the gain.** The speech/silence decision still uses the ungained chunk, so the learned noise floor and cutoff mean what they did before.
+- **Digital gain doesn't improve signal-to-noise.** It raises noise just as much. It only moves the level into the range the model was trained on.
+- **Measured, not guessed.** Recorded turns replayed offline: 4/9 at 10 dB, 7/9 at 20 dB on a quiet session, with no loss on a louder one.
 
 ### The end-of-command state machine
 
@@ -277,6 +320,14 @@ openWakeWord also loads its helper models (`melspectrogram`, `embedding_model`, 
 - **`next_turn` returns a `VoiceTurn`**, a frozen record of the text, the raw text, scores, timings and the phase dicts as `metadata`.
 - **`close`** terminates arecord politely, waits one second, then kills it.
 
+### Recording turns
+
+When `record_dir` is set, `_ensure_ready` wraps the mic stream in a `TurnRecorder` (chapter 06). Nothing else in the pipeline knows: every `read` passes through it.
+
+- **`mark_wake`** is called right after a wake, before the beep, so the recording starts 1 s before the wake word was detected.
+- **`write_turn(heard_summary(...))`** saves the turn when capture ends. `heard_summary` flattens what the phases found (text, wake scores, floor, cutoff, `command_started`) into the JSON sidecar.
+- **A missed wake writes nothing.**
+
 ## The command-line smoke test
 
 `main()` makes the module runnable on its own:
@@ -291,7 +342,7 @@ The summary counts wake hits and empty turns, and gives the median command laten
 ## Observations
 
 1. **The wake settings were never tuned for `hey_marvin`.** The robot runs at 0.3 and 1, written out in its YAML. A `~/tune` session would show whether that's too loose.
-2. **The grammar lives in three places**: `DEFAULT_GRAMMAR`, the YAML, and `intent_mapper.PHRASE_INTENTS`. A test that checks they agree would catch a command that can't be heard.
-3. **The bandpass filter is a per-sample Python loop.** `scipy.signal.lfilter` with carried state would be far cheaper on the Pi's CPU.
-4. **Phases return dicts with implicit keys** (`wake_hit`, `noise_window`, `floor`, ...). Small frozen dataclasses would make the contract between `wait_for_wake`, `capture_command` and the node explicit.
-5. **`clean_transcript` can't strip a wake word that isn't in the grammar**, which is the usual case. It is harmless, but mostly dead.
+2. **The bandpass filter is a per-sample Python loop.** `scipy.signal.lfilter` with carried state would be far cheaper on the Pi's CPU.
+3. **Phases return dicts with implicit keys** (`wake_hit`, `noise_window`, `floor`, ...). Small frozen dataclasses would make the contract between `wait_for_wake`, `capture_command` and the node explicit.
+4. **`clean_transcript` can't strip a wake word that isn't in the grammar**, which is the usual case. It is harmless, but mostly dead. F10 adds the wake phrase to the grammar.
+5. **The file is about 790 lines.** Config models, audio input and the turn loop are three modules waiting to be split (a chore).

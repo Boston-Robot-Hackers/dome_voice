@@ -7,15 +7,20 @@ Open Source Under MIT license
 """
 
 PHRASE_INTENTS = (
-    (("stop",),     "stop"),
-    (("right",),    "turn_right"),
-    (("left",),     "turn_left"),
-    (("explore",),  "explore"),
+    (("stop",), "stop"),
+    (("right",), "turn_right"),
+    (("left",), "turn_left"),
+    (("explore",), "exploration_start"),
     (("describe",), "describe_scene"),
-    (("objects",),  "list_objects"),
-    (("status",),   "get_status"),
-    (("help",),     "get_help"),
+    (("objects",), "list_objects"),
+    (("status",), "get_status"),
+    (("help",), "get_help"),
 )
+
+
+def command_words() -> tuple[str, ...]:
+    """Every phrase in the command table, in table order: the Vosk grammar."""
+    return tuple(phrase for phrases, _ in PHRASE_INTENTS for phrase in phrases)
 
 
 def contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:

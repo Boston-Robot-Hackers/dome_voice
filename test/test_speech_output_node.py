@@ -4,11 +4,12 @@ import wave
 from unittest.mock import MagicMock, patch
 
 from dome_control.announcement_contract import (
-    Announcement,
     PRIORITY_CHITCHAT,
     PRIORITY_QUERY_REPLY,
+    Announcement,
     make_announcement_msg,
 )
+
 from dome_voice.speech_output_node import (
     apply_wav_gain,
     parse_length_scale,
@@ -168,7 +169,9 @@ def test_apply_wav_gain_reduces_sample_amplitude(tmp_path):
 @patch("dome_voice.speech_output_node.play_wav")
 @patch("dome_voice.speech_output_node.apply_wav_gain")
 @patch("dome_voice.speech_output_node.synthesize_to_wav")
-def test_speak_text_applies_gain_when_configured(mock_synth, mock_gain, mock_play):
+def test_speak_text_applies_gain_when_configured(
+    mock_synth, mock_gain, mock_play, tmp_path
+):
     from dome_voice.speech_output_node import SpeechOutputNode
 
     node = SpeechOutputNode.__new__(SpeechOutputNode)
@@ -177,13 +180,17 @@ def test_speak_text_applies_gain_when_configured(mock_synth, mock_gain, mock_pla
     node.alsa_device = "hw:1,0"
     node.speech_gain = 0.35
     node.length_scale = 1.25
-    node.make_wav_path = MagicMock(
-        side_effect=["/tmp/raw.wav", "/tmp/quiet.wav"]
-    )
+    raw_wav = tmp_path / "raw.wav"
+    quiet_wav = tmp_path / "quiet.wav"
+    raw_wav.touch()
+    quiet_wav.touch()
+    node.make_wav_path = MagicMock(side_effect=[str(raw_wav), str(quiet_wav)])
 
     SpeechOutputNode.speak_text(node, "hello")
 
     mock_synth.assert_called_once()
     assert mock_synth.call_args.kwargs["length_scale"] == 1.25
-    mock_gain.assert_called_once_with("/tmp/raw.wav", "/tmp/quiet.wav", 0.35)
-    mock_play.assert_called_once_with("/tmp/quiet.wav", alsa_device="hw:1,0")
+    mock_gain.assert_called_once_with(str(raw_wav), str(quiet_wav), 0.35)
+    mock_play.assert_called_once_with(str(quiet_wav), alsa_device="hw:1,0")
+    assert not raw_wav.exists()
+    assert not quiet_wav.exists()

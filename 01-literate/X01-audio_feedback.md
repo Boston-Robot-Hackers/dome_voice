@@ -1,5 +1,5 @@
 ---
-version: "2.0"
+version: "2.1"
 generated: "2026-11-19"
 ---
 
@@ -41,18 +41,22 @@ partial = math.sin(2 * math.pi * frequency * 2.76 * t) * math.exp(-12.0 * t) * 0
 cmd = ["aplay", "-q", "-f", "S16_LE", "-r", str(sample_rate), "-c", "2"]
 if alsa_device:
     cmd.extend(["-D", alsa_device])
-subprocess.run(cmd, input=bytes(buf), check=False, capture_output=True)
+result = subprocess.run(cmd, check=False, input=bytes(buf), capture_output=True)
+if result.returncode != 0:
+    raise RuntimeError(f"beep: aplay failed ({result.returncode}): ...")
 ```
 
 The raw PCM goes to `aplay` on stdin, so no file is written. The device comes from **`$SPEECH_ALSA_DEVICE`**, the same variable speech output uses, so beeps and speech come out of the same speaker.
 
 **The call blocks** until the beep finishes, so command capture starts only after the "I'm listening" beep has played.
 
-**But arecord keeps recording during the beep.** Its audio waits in the pipe, and `capture_command` reads it first. Only one 80 ms chunk is skipped (`WAKE_SKIP_CHUNKS`), so most of the 0.3 s beep, picked up by the microphone, is probably fed to Vosk and the speech detector. That is unverified, but it could count as "speech has started" and shorten the real command window.
+**A failed aplay raises**, with aplay's own message (for example *Device or resource busy*). It used to pass silently, which hid exactly the kind of problem found on the robot. `check=False` is deliberate: the return code is checked by hand to put stderr in the message.
+
+**But arecord keeps recording during the beep.** Recordings confirmed the mic hears it, and it used to start the command turn early. `capture_command` now skips the beep's duration (chapter 01), and the wake beep is 0.1 s.
 
 ## Observations
 
-1. **The wake beep is probably recorded.** Skipping the beep's duration in chunks after `on_wake`, instead of one chunk, would keep it out of the command.
+1. **A beep failure now stops `voice_input`.** The node calls `beep()` with no handler, so a busy device (an announcement playing on `plughw:0,0` at the same moment) raises out of the voice loop. The node should catch `RuntimeError` at its beep calls and log it.
 2. **`device_index` is accepted and ignored.** The parameter suggests the caller picks the device, but the environment variable does. The voice node passes it on every call.
-3. **Failures are only half reported.** `check=False` means a non-zero `aplay` exit, such as a busy device, passes silently. Only an exception, such as `aplay` missing, is printed, and that goes to `print(..., file=sys.stderr)` rather than a logger.
+3. **The amplitude is capped at 7 % of full scale** (`0.07 * volume`), about −23 dBFS, so `volume` can only make beeps quieter. A chore tracks it.
 4. **The per-sample loop** builds up to 9 600 samples in Python for the longest beep. That's fine at this size; numpy would make it one expression.

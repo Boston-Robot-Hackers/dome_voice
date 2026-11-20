@@ -1,5 +1,5 @@
 ---
-version: "2.0"
+version: "2.1"
 generated: "2026-11-19"
 ---
 
@@ -85,13 +85,21 @@ With a gain of exactly 1.0, the step is skipped and the original file is played.
 try:
     self.speak_text(announcement.text)
     ...
-except Exception as exc:
+except (
+    RuntimeError,
+    ValueError,
+    OSError,
+    subprocess.CalledProcessError,
+    wave.Error,
+) as exc:
     self.get_logger().error(f"Speech output failed: {exc}")
 ```
 
 **One failed announcement must not kill the node**, so every error is logged and the node carries on. That's what you see on the robot today: `No such file or directory` for the missing piper binary, once per announcement, with the node still running.
 
-The catch is broad, though. A programming error in `speak_text` would be logged the same way as a missing file.
+**The catch names what `speak_text` can actually raise:** a missing piper model (`RuntimeError`), a bad gain or sample width (`ValueError`), a missing binary (`OSError`), piper or aplay failing (`CalledProcessError`), and a bad WAV (`wave.Error`). A programming error, such as a `TypeError`, now surfaces instead of being logged as a speech failure.
+
+**Cleanup removes both temp files unconditionally.** `make_wav_path` creates each with `mkstemp`, so they always exist.
 
 ## Shutdown
 
@@ -103,4 +111,4 @@ The catch is broad, though. A programming error in `speak_text` would be logged 
 2. **Priority is ignored.** The contract supports priorities and dedup keys, and dome_control's features F08 to F10 (priority queue, barge-in, dedup) plan to use them. Until then, the order is first-come, first-served.
 3. **Two sets of defaults.** This node's fallbacks (gain 0.35, length 1.25) differ from the launch file's (0.25, 1.0). Only the launch file's apply on the robot. One set would be enough.
 4. **The gain loop is per-sample Python.** For a few seconds of 22 kHz audio it's fine; `numpy` would do the same in one vectorised call.
-5. **A broad `except Exception`** hides bugs as runtime failures. Catching `subprocess.CalledProcessError`, `OSError` and `wave.Error` would cover the real cases.
+5. **Speech and beeps can collide.** Speech plays on `plughw:0,0`, which takes the device exclusively, while beeps use ALSA's default. A beep during an announcement can fail with *Device or resource busy*.

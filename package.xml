@@ -13,6 +13,9 @@
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-pydantic</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <!-- openwakeword==0.4.0 and vosk have no rosdep keys: provision_dome's
+       manifest/pip.txt installs them, and install-optional-deps.sh vosk|piper
+       installs the Vosk model and Piper. -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

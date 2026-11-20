@@ -4,11 +4,8 @@
 from dome_voice.runtime import (
     VoiceRuntime,
     load_voice_runtime_config,
-    rms_dbfs,
     noise_floor,
     silence_cutoff,
-    read_mono_chunk,
-    CHUNK,
 )
 
 
@@ -33,7 +30,9 @@ def main():
         print()
 
         def on_wake(wake):
-            print(f"WAKE DETECTED  score={wake['score']}  elapsed={wake['elapsed_ms']}ms  max={wake['max_score']}")
+            print(
+                f"WAKE DETECTED  score={wake['score']}  elapsed={wake['elapsed_ms']}ms  max={wake['max_score']}"
+            )
             nf = noise_floor(wake["noise_window"])
             cut = silence_cutoff(nf, config.silence_dbfs, config.silence_margin)
             nf_str = f"{nf:.1f}" if nf is not None else "None"
@@ -48,7 +47,7 @@ def main():
             return
 
         cmd = (turn.metadata or {}).get("command", {})
-        print(f"TURN RESULT")
+        print("TURN RESULT")
         print(f"  text:            {turn.text!r}")
         print(f"  raw_text:        {turn.raw_text!r}")
         print(f"  empty:           {turn.empty}")
@@ -61,15 +60,22 @@ def main():
         if turn.empty:
             print("DIAGNOSIS:")
             if not cmd.get("command_started"):
-                print("  command_started=False — speech not detected above silence cutoff")
+                print(
+                    "  command_started=False — speech not detected above silence cutoff"
+                )
                 print("  Try speaking louder or check cutoff vs floor values above")
             elif not turn.raw_text:
-                print("  command_started=True but raw_text empty — Vosk got audio but no transcript")
+                print(
+                    "  command_started=True but raw_text empty — Vosk got audio but no transcript"
+                )
                 print("  Word may not be in grammar or audio too garbled")
             else:
-                print(f"  raw_text={turn.raw_text!r} but text empty after clean_transcript")
+                print(
+                    f"  raw_text={turn.raw_text!r} but text empty after clean_transcript"
+                )
         else:
             from dome_voice.intent_mapper import map_intent
+
             intent = map_intent(turn.text)
             print(f"INTENT: {intent}")
     finally:
@@ -79,12 +85,16 @@ def main():
 def test_beep():
     """Test audio output: plays two beeps at different frequencies."""
     import os
+
     from dome_voice.audio_feedback import beep
+
     device = os.environ.get("SPEECH_ALSA_DEVICE", "(default)")
     print(f"Testing beep — SPEECH_ALSA_DEVICE={device}")
     print("Beep 1 (880 Hz)...")
     beep(frequency=880, duration=0.3)
-    import time; time.sleep(0.2)
+    import time
+
+    time.sleep(0.2)
     print("Beep 2 (220 Hz)...")
     beep(frequency=220, duration=0.6)
     print("Done. Did you hear two tones?")
@@ -92,6 +102,7 @@ def test_beep():
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1 and sys.argv[1] == "beep":
         test_beep()
     else:

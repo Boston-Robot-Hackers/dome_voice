@@ -5,6 +5,9 @@
 # overrides them, and every value the robot uses is written out here so the
 # file says what the robot does. Unknown keys are an error. Paste ~/tune
 # results here, not into code: the shape matches tune's active.yaml.
+#
+# The Vosk grammar is not set here: it is derived from the command table,
+# PHRASE_INTENTS in dome_voice/intent_mapper.py (F03).
 
 capture_card: 0                 # ALSA card for arecord (hw:<card>,0)
 playback_card: 0
@@ -14,17 +17,17 @@ stream_settings:
   threshold: 0.3                # min wake score per 80 ms chunk (0.0–1.0); raise if false triggers
   wake_hits: 1                  # consecutive chunks above threshold; raise to resist noise spikes
                                 # (the old in-code table had 0.7 and 3, tuned for "alexa")
-  wake_cooldown_secs: 1.5       # drain the mic this long after a turn before listening again
+  wake_cooldown_secs: 0.8       # drain the mic this long after a turn before listening again
   live_filter: true             # apply the sox_chain bandpass to mic input
   vosk_model: small             # "small" or "large", or a model directory
-  grammar: [stop, right, left, explore, describe, objects, status, help]
-                                # must include every phrase in intent_mapper.PHRASE_INTENTS
   silence_dbfs: none            # fixed silence level (dBFS); none = learn it from the room
   silence_margin: 5.0           # dB above the noise floor that counts as speech
   silence_secs: 1.0             # this much silence ends a command
   min_command_secs: 0.4         # a command can't end sooner than this
   command_start_secs: 2.5       # give up if speech hasn't started by then
   max_command_secs: 8.0         # hard cap on one command
+  stt_gain_db: 20.0             # digital gain on Vosk's input only (PGA > 30 dB mutes; I02)
+  record_dir: none              # dir for per-turn WAV + JSON (F05); none = off
 
 sox_chain:                      # bandpass cutoffs in Hz; none turns a side off
   highpass: 120
@@ -32,7 +35,7 @@ sox_chain:                      # bandpass cutoffs in Hz; none turns a side off
 
 beep:
   wake_freq: 880                # Hz — wake word detected
-  wake_duration: 0.3            # seconds
+  wake_duration: 0.1            # seconds
   wake_volume: 1.0              # 0.0–1.0
   intent_freq: 330              # Hz — intent recognized
   intent_duration: 0.02

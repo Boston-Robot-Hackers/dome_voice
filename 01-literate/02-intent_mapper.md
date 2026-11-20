@@ -27,14 +27,14 @@ Every recognised command becomes the same small dict:
 
 ```python
 PHRASE_INTENTS = (
-    (("stop",),     "stop"),
-    (("right",),    "turn_right"),
-    (("left",),     "turn_left"),
-    (("explore",),  "explore"),
+    (("stop",), "stop"),
+    (("right",), "turn_right"),
+    (("left",), "turn_left"),
+    (("explore",), "exploration_start"),
     (("describe",), "describe_scene"),
-    (("objects",),  "list_objects"),
-    (("status",),   "get_status"),
-    (("help",),     "get_help"),
+    (("objects",), "list_objects"),
+    (("status",), "get_status"),
+    (("help",), "get_help"),
 )
 ```
 
@@ -59,19 +59,27 @@ def map_intent(self, text: str) -> dict | None:
 - **Matching is substring containment** (`phrase in text`), not whole-word. That's acceptable only because Vosk's grammar limits the input to the table's own words, so "stop" can never arrive inside "stopwatch".
 - **The first row wins.** If a transcript had several words, say "stop left", it would map to `stop`. Putting `stop` first is a safe ordering for a robot.
 
-## Keeping the grammar in step
+## The grammar comes from this table
 
-**Two lists must agree:** these phrases, and `runtime.py`'s `DEFAULT_GRAMMAR`.
+```python
+def command_words() -> tuple[str, ...]:
+    return tuple(phrase for phrases, _ in PHRASE_INTENTS for phrase in phrases)
+```
 
-- A word in the grammar but not in this table is **recognised, then rejected**, with a failure beep.
-- A word in this table but not in the grammar can **never be heard at all**, because Vosk outputs `[unk]` instead.
+**The Vosk grammar is derived from `PHRASE_INTENTS`** (F03). `VoiceRuntimeConfig.grammar` returns `command_words()`, so there is no second list to keep in step.
 
-Nothing checks this today; the notes ask whoever adds a command to update both.
+That matters because the two failure modes were silent:
+
+- A word in the grammar but not in the table would be **recognised, then rejected**, with a failure beep.
+- A word in the table but not in the grammar could **never be heard at all**, because Vosk outputs `[unk]` instead.
+
+Adding a voice command is now one new row here.
 
 ## The module-level wrapper
 
 ```python
 DEFAULT_MAPPER = IntentMapper()
+
 
 def map_intent(text: str) -> dict | None:
     return DEFAULT_MAPPER.map_intent(text)
@@ -81,6 +89,5 @@ A free function kept for older call sites and tests, such as `testvoice.py`. `In
 
 ## Observations
 
-1. **Derive one list from the other.** Building `DEFAULT_GRAMMAR` from `PHRASE_INTENTS`, or adding a test that asserts they match, would remove the only easy way to break voice input silently.
-2. **Substring matching depends on the grammar.** If the grammar is ever loosened, or free transcription is used, "stop" would match "stopping" and "unstoppable". Matching on word boundaries would make the mapper safe on its own.
-3. **The class adds little.** It holds a constant and one method. It earns its place only if per-instance tables, say per language, are coming.
+1. **Substring matching depends on the grammar.** If the grammar is ever loosened, or free transcription is used, "stop" would match "stopping" and "unstoppable". Matching on word boundaries would make the mapper safe on its own.
+2. **The class adds little.** It holds a constant and one method. It earns its place only if per-instance tables, say per language, are coming.

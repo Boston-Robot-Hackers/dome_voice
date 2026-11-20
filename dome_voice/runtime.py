@@ -20,23 +20,14 @@ from typing import Any
 
 import numpy as np
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-RATE = 16000
+from dome_voice.intent_mapper import command_words
+from dome_voice.turn_recorder import RATE, TurnRecorder, stereo_to_mono
+
 CHUNK = 1280
-WAKE_SKIP_CHUNKS = 1
+WAKE_SKIP_CHUNKS = 2  # wake word tail and aplay start-up, on top of the beep itself
 FLOOR_MAX_DBFS = -25.0
-
-DEFAULT_GRAMMAR = (
-    "stop",
-    "right",
-    "left",
-    "explore",
-    "describe",
-    "objects",
-    "status",
-    "help",
-)
 
 VOSK_MODEL_PATHS = {
     "small": "~/models/vosk-model-small-en-us-0.15",
@@ -62,27 +53,29 @@ class StreamSettings(StrictModel):
     wake_cooldown_secs: float = Field(1.5, ge=0.0)
     live_filter: bool = True
     vosk_model: str = "small"
-    grammar: tuple[str, ...] = DEFAULT_GRAMMAR
     silence_dbfs: float | None = None
     silence_margin: float = 5.0
     silence_secs: float = Field(1.0, gt=0.0)
     min_command_secs: float = Field(0.4, ge=0.0)
     command_start_secs: float = Field(2.5, gt=0.0)
     max_command_secs: float = Field(8.0, gt=0.0)
+    stt_gain_db: float = 0.0
+    record_dir: str | None = None
 
-    @field_validator("grammar", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def parse_grammar(cls, value: Any) -> tuple[str, ...]:
-        """A list, or one comma-separated string; an empty grammar is an error."""
-        items = value.split(",") if isinstance(value, str) else value
-        grammar = tuple(str(item).strip() for item in items if str(item).strip())
-        if not grammar:
-            raise ValueError("grammar is empty")
-        return grammar
+    def reject_grammar(cls, values: Any) -> Any:
+        """`grammar` was a key before F03; say where it went instead of 'extra'."""
+        if isinstance(values, dict) and "grammar" in values:
+            raise ValueError(
+                "stream_settings.grammar is no longer a setting: the grammar is "
+                "derived from PHRASE_INTENTS in dome_voice/intent_mapper.py"
+            )
+        return values
 
-    @field_validator("silence_dbfs", mode="before")
+    @field_validator("silence_dbfs", "record_dir", mode="before")
     @classmethod
-    def blank_silence_dbfs(cls, value: Any) -> Any:
+    def blank_optional(cls, value: Any) -> Any:
         return none_if_blank(value)
 
 
@@ -155,13 +148,14 @@ class VoiceRuntimeConfig:
     highpass: float | None
     lowpass: float | None
     vosk_model: str
-    grammar: tuple[str, ...]
     silence_dbfs: float | None
     silence_margin: float
     silence_secs: float
     min_command_secs: float
     command_start_secs: float
     max_command_secs: float
+    stt_gain_db: float
+    record_dir: str | None
     beep_wake_freq: int
     beep_wake_duration: float
     beep_wake_volume: float
@@ -171,6 +165,10 @@ class VoiceRuntimeConfig:
     beep_fail_freq: int
     beep_fail_duration: float
     beep_fail_volume: float
+
+    @property
+    def grammar(self) -> tuple[str, ...]:
+        return command_words()
 
     @property
     def vosk_model_path(self) -> str:
@@ -266,6 +264,7 @@ class VoiceRuntime:
         self.stt_model = stt_model
         self.time_fn = time_fn
         self.live_filter = make_live_filter(self.config)
+        self.recorder: TurnRecorder | None = None
         self._arecord_process = None
 
     def next_turn(
@@ -292,6 +291,8 @@ class VoiceRuntime:
                 wake_elapsed_ms=wake["elapsed_ms"],
                 metadata={"wake": wake},
             )
+        if self.recorder:
+            self.recorder.mark_wake()
         if on_wake:
             on_wake(wake)
 
@@ -306,7 +307,7 @@ class VoiceRuntime:
             noise_window=wake["noise_window"],
             time_fn=self.time_fn,
         )
-        return VoiceTurn(
+        turn = VoiceTurn(
             text=command["text"],
             raw_text=command["raw_text"],
             wake_score=wake["score"],
@@ -315,12 +316,16 @@ class VoiceRuntime:
             empty=command["empty"],
             metadata={"wake": wake, "command": command},
         )
+        if self.recorder:
+            self.recorder.write_turn(heard_summary(turn, self.config))
+        return turn
 
     def close(self) -> None:
         if self._arecord_process is not None:
             _terminate_process(self._arecord_process)
             self._arecord_process = None
         self.stream = None
+        self.recorder = None
 
     def _ensure_ready(self) -> None:
         if self.stream is None:
@@ -329,10 +334,33 @@ class VoiceRuntime:
                 raise RuntimeError("arecord stdout unavailable")
             self.stream = proc.stdout
             self._arecord_process = proc
+        if self.config.record_dir and self.recorder is None:
+            self.recorder = TurnRecorder(
+                self.stream, Path(self.config.record_dir).expanduser(), CHUNK * 4
+            )
+            self.stream = self.recorder
         if self.wake_model is None or not self.wake_key:
             self.wake_model, self.wake_key = load_wake_model(self.config.wake_word)
         if self.vosk_module is None or self.stt_model is None:
             self.vosk_module, self.stt_model = load_stt_model(self.config.vosk_model)
+
+
+def heard_summary(turn: VoiceTurn, config: VoiceRuntimeConfig) -> dict[str, Any]:
+    """What the pipeline heard in one turn, for a recording's JSON sidecar."""
+    wake = turn.metadata["wake"]
+    command = turn.metadata["command"]
+    return {
+        "text": turn.text,
+        "raw_text": turn.raw_text,
+        "empty": turn.empty,
+        "wake_score": turn.wake_score,
+        "wake_max_score": wake["max_score"],
+        "command_started": command["command_started"],
+        "floor_dbfs": command["floor"],
+        "cutoff_dbfs": command["cutoff"],
+        "command_elapsed_ms": turn.command_elapsed_ms,
+        "config": config.source_path,
+    }
 
 
 def load_voice_runtime_config(
@@ -396,10 +424,7 @@ def read_mono_chunk(
     raw = stream.read(n_samples * 4)
     if len(raw) < n_samples * 4:
         return None
-    stereo = np.frombuffer(raw, dtype=np.int16).reshape(-1, 2)
-    mono = stereo.mean(axis=1).astype(np.float32)
-    mono -= float(np.mean(mono))
-    chunk = np.clip(mono, -32768, 32767).astype(np.int16)
+    chunk = stereo_to_mono(raw)
     if live_filter:
         chunk = live_filter.process(chunk)
     return chunk
@@ -428,6 +453,16 @@ def silence_cutoff(
     if noise_floor_value is None:
         return -38.0
     return min(noise_floor_value + margin, -22.0)
+
+
+def apply_gain(samples: np.ndarray, gain_db: float) -> np.ndarray:
+    scaled = samples.astype(np.float32) * 10 ** (gain_db / 20)
+    return np.clip(scaled, -32768, 32767).astype(np.int16)
+
+
+def wake_skip_chunks(config: VoiceRuntimeConfig) -> int:
+    """Chunks to drop after wake so the wake beep doesn't start the command."""
+    return WAKE_SKIP_CHUNKS + math.ceil(config.beep_wake_duration * RATE / CHUNK)
 
 
 def clean_transcript(text: str, wake_word: str) -> str:
@@ -538,7 +573,7 @@ def capture_command(
 ) -> dict[str, Any]:
     floor = noise_floor(noise_window or [])
     cutoff = silence_cutoff(floor, config.silence_dbfs, config.silence_margin)
-    for _ in range(WAKE_SKIP_CHUNKS):
+    for _ in range(wake_skip_chunks(config)):
         read_mono_chunk(stream, CHUNK, live_filter)
 
     grammar_json = json.dumps((grammar or []) + ["[unk]"]) if grammar else None
@@ -574,7 +609,9 @@ def capture_command(
             speech_chunks = 0
             silence_chunks += 1
 
-        endpoint = rec.AcceptWaveform(cmd_chunk.tobytes())
+        endpoint = rec.AcceptWaveform(
+            apply_gain(cmd_chunk, config.stt_gain_db).tobytes()
+        )
         if endpoint:
             result = json.loads(rec.Result())
             final_text = result.get("text", "").strip()
@@ -691,7 +728,6 @@ def main() -> None:
     parser.add_argument("--threshold", type=float)
     parser.add_argument("--wake-hits", type=int)
     parser.add_argument("--wake-word")
-    parser.add_argument("--grammar", help="Comma-separated Vosk grammar override")
     parser.add_argument(
         "--trials", type=int, default=0, help="Run this many voice turns"
     )
@@ -703,7 +739,6 @@ def main() -> None:
             "threshold": args.threshold,
             "wake_hits": args.wake_hits,
             "wake_word": args.wake_word,
-            "grammar": args.grammar,
         },
     )
     if args.trials <= 0:

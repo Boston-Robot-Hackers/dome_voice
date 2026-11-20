@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-from dome_voice.intent_mapper import IntentMapper, map_intent
+from dome_voice import intent_mapper
+from dome_voice.intent_mapper import IntentMapper, command_words, map_intent
 
 
 def test_describe_scene():
@@ -16,7 +17,7 @@ def test_single_word_motion_phrases():
 
 
 def test_explore():
-    assert map_intent("explore")["name"] == "explore"
+    assert map_intent("explore")["name"] == "exploration_start"
 
 
 def test_status():
@@ -62,3 +63,22 @@ def test_intent_mapper_class_api():
     mapper = IntentMapper()
     assert mapper.map_intent("stop")["name"] == "stop"
     assert mapper.map_intent("nonsense phrase") is None
+
+
+def test_command_words_are_every_phrase_in_table_order():
+    assert command_words() == (
+        "stop",
+        "right",
+        "left",
+        "explore",
+        "describe",
+        "objects",
+        "status",
+        "help",
+    )
+
+
+def test_a_new_table_row_adds_its_phrase_to_the_grammar(monkeypatch):
+    table = intent_mapper.PHRASE_INTENTS + ((("go forward",), "forward"),)
+    monkeypatch.setattr(intent_mapper, "PHRASE_INTENTS", table)
+    assert command_words()[-1] == "go forward"

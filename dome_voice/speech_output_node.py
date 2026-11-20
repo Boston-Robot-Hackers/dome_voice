@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # speech_output_node.py — ROS2 node: subscribe to /announcement and speak via Piper + ALSA
 # Author: Pito Salas and Claude Code
+# Version: 1
+# Created: 2026-11-19
+# Updated: 2026-11-19
 # Open Source Under MIT license
 
 import os
@@ -10,10 +13,9 @@ import tempfile
 import wave
 
 import rclpy
+from dome_control.announcement_contract import Announcement, AnnouncementMsg
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-
-from dome_control.announcement_contract import Announcement, AnnouncementMsg
 
 
 def synthesize_to_wav(
@@ -138,7 +140,13 @@ class SpeechOutputNode(Node):
                 f"Spoken announcement ({announcement.priority}) from "
                 f"{announcement.source}: {announcement.text}"
             )
-        except Exception as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            OSError,
+            subprocess.CalledProcessError,
+            wave.Error,
+        ) as exc:
             self.get_logger().error(f"Speech output failed: {exc}")
 
     def make_wav_path(self) -> str:
@@ -170,10 +178,7 @@ class SpeechOutputNode(Node):
         finally:
             for path in (wav_path, gained_path):
                 if path:
-                    try:
-                        os.remove(path)
-                    except FileNotFoundError:
-                        pass
+                    os.remove(path)
 
 
 def main():

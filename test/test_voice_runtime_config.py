@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # test_voice_runtime_config — voice config: defaults, YAML layering, overrides
 # Author: Pito Salas and Claude Code
-# Version: 1
+# Version: 2
 # Created: 2026-11-19
 # Updated: 2026-11-19
 # Open Source Under MIT license
@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from dome_voice.runtime import DEFAULT_GRAMMAR, load_voice_runtime_config
+from dome_voice.intent_mapper import command_words
+from dome_voice.runtime import load_voice_runtime_config
 
 REPO = Path(__file__).resolve().parent.parent
 ROBOT_YAML = REPO / "config" / "voice.yaml"
@@ -31,7 +32,7 @@ def test_no_yaml_gives_the_defaults():
     cfg = load_voice_runtime_config()
     assert cfg.source_path == "defaults"
     assert (cfg.wake_word, cfg.threshold, cfg.wake_hits) == ("alexa", 0.3, 1)
-    assert cfg.grammar == DEFAULT_GRAMMAR
+    assert cfg.grammar == command_words()
     assert (cfg.highpass, cfg.lowpass) == (120.0, 4000.0)
 
 
@@ -90,16 +91,16 @@ def test_none_turns_a_cutoff_off(tmp_path, spelling):
     assert load_voice_runtime_config(path).highpass is None
 
 
-def test_grammar_from_a_comma_string(tmp_path):
-    path = write_yaml(tmp_path, "stream_settings:\n  grammar: go forward, stop\n")
-    assert load_voice_runtime_config(path).grammar == ("go forward", "stop")
-
-
-@pytest.mark.parametrize("grammar", ["''", "[]", "' , '"])
-def test_empty_grammar_raises(tmp_path, grammar):
-    path = write_yaml(tmp_path, f"stream_settings:\n  grammar: {grammar}\n")
-    with pytest.raises(ValidationError):
+def test_grammar_key_raises_and_says_it_is_derived(tmp_path):
+    path = write_yaml(tmp_path, "stream_settings:\n  grammar: [stop]\n")
+    with pytest.raises(ValidationError) as error:
         load_voice_runtime_config(path)
+    assert "derived from PHRASE_INTENTS" in str(error.value)
+
+
+def test_grammar_override_is_unknown():
+    with pytest.raises(ValueError):
+        load_voice_runtime_config(overrides={"grammar": "stop"})
 
 
 def test_out_of_range_value_raises(tmp_path):
@@ -132,14 +133,12 @@ def test_overrides_beat_the_yaml(tmp_path):
         overrides={
             "threshold": 0.25,
             "wake_hits": None,
-            "grammar": "turn left,stop",
             "beep_wake_freq": 1000,
             "highpass": 90,
         },
     )
     assert cfg.threshold == 0.25
     assert cfg.wake_hits == 2
-    assert cfg.grammar == ("turn left", "stop")
     assert cfg.beep_wake_freq == 1000
     assert cfg.highpass == 90
 

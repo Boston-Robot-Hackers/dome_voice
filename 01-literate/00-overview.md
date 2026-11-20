@@ -1,5 +1,5 @@
 ---
-version: "2.0"
+version: "2.1"
 generated: "2026-11-19"
 ---
 
@@ -31,6 +31,7 @@ dome_voice/
 ├── runtime.py            # audio capture, wake detection, STT, config — no ROS
 ├── intent_mapper.py      # transcript → intent dict — no ROS, no audio
 ├── audio_feedback.py     # confirmation beeps via aplay — no ROS
+├── turn_recorder.py      # each turn to WAV + JSON, for listening and replay — no ROS
 ├── voice_input_node.py   # ROS node: runtime + mapper → /intent, /voice/state
 └── speech_output_node.py # ROS node: /announcement → Piper → aplay
 launch/robot.launch.py    # starts both nodes
@@ -78,9 +79,12 @@ A *turn* is one wake word plus one command:
 | 03 | `voice_input_node.py` | the ROS shell and the state topic |
 | 04 | `speech_output_node.py` | Piper synthesis, gain, playback |
 | 05 | `launch/robot.launch.py` | how the nodes are started and configured |
+| 06 | `turn_recorder.py` | recording turns, and why they start before the wake |
 | X01 | `audio_feedback.py` | the beep synthesiser |
 | X02 | `testvoice.py` | the one-turn diagnostic |
 
 ## Current state on the robot (2026-11-19)
 
-**The code is complete, but the Pi is missing its runtime.** The piper binary and voice model, `openwakeword`, `vosk` and its model, and the `hey_marvin` wake model are not installed. `voice_input` crashes on import, and `speech_output` reports the missing piper binary on each announcement. dome2's `TF05` records the details.
+**The runtime is installed on the Pi** (I02, 2026-11-19): `openwakeword` 0.4.0 (which bundles `hey_marvin`), `vosk` with its small English model in `~/models`, and Piper with the lessac voice. `provision_dome` now installs all of them.
+
+**Voice commands work** (2026-11-19, after I02's fixes): the last session got 6 of 8, the last 6 in a row. The fixes were a mix of hardware settings (ADC highpass on, PGA at 30 dB) and code (no per-chunk mean, `stt_gain_db: 20`, skipping the wake beep). Recording turns (chapter 06) is what made them measurable.

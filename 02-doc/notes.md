@@ -12,9 +12,9 @@ device index conflicts on Raspberry Pi. Stereo→mono average in `read_mono_chun
 
 ## Grammar constraint
 
-Vosk grammar must include every phrase in `PHRASE_INTENTS` plus `[unk]`. Adding a new voice
-command requires updating `intent_mapper.py`, `DEFAULT_GRAMMAR` in `runtime.py`, and the grammar in
-`config/voice.yaml`.
+**The Vosk grammar is derived from `PHRASE_INTENTS`** in `intent_mapper.py` (F03, 2026-11-19),
+plus `[unk]`. Adding a voice command is one new row in that table. `voice.yaml` no longer has a
+`grammar` key; a YAML that still names it raises.
 
 ## Tuned parameters
 
