@@ -17,7 +17,13 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - **Suggested order:** F03 → F05 → F04 → F07 → F11 → F10 → F06 → F09 → F08.
 - **Chores** are in `04-tasks/chores.md`.
 
-### Next: F05 (record and replay) — F03 paused
+### In progress: F12 (LLM loop spike)
+
+- **The code is in `spikes/llm_loop/`**, and `README.md` there has the setup and run steps.
+- **T01 and T03 are done.** T02's code and unit tests are done; next is the first VM run: start `vm_llm_node.py`, then replay a WAV with `publish_wav.py`.
+- **Then T04:** about 10 live exchanges, with findings and a go/no-go written into F12.
+
+### Paused: F05 (record and replay)
 
 - **Voice works on the robot** as of 2026-11-19: the last session got 6 of 8, the last 6 in a row.
 - **T02 is mostly done:** 16 turns are recorded in `~/voice_recordings`. Left: once with motors running.
