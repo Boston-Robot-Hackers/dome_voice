@@ -106,12 +106,12 @@ Manual check: `ros2 topic pub --once /voice/llm_text std_msgs/String "data: 'tel
 **Description**:
 - Update `spec.md`: the pipeline diagram, the config section, and the planned marks.
 - Regenerate the literate docs for `runtime.py`, `voice_input_node.py`, `llm_turn.py` and `llm_node.py`.
-- Add the VM setup (from the spike README) to `02-doc/`.
+- Add the VM setup (from the spike README) to `process/02-doc/`.
 
 **Test**: none, since this is documentation.
 
 ## T08 — Launch the VM side from `remote.launch.py`
-**Status**: code done, 2 launch tests passing; the check on the VM is still to do
+**Status**: done (2026-11-20): on the VM, `bl dome2 remote.launch.py --options "vi vo"` started the LLM node with the installed persona
 **Description**: Start `llm_node` the way the rest of the stack starts, so the VM runs `bl dome2 remote.launch.py --options "vi vo"` instead of a hand-typed command.
 - **dome_voice:** a `llm_node` entry point, `launch/remote.launch.py` starting it, and `config/llm_persona.md` installed.
 - **`llm_node` takes ROS parameters** (`persona`, `whisper_model`, `model`) instead of argparse flags, so a launch can set them. `persona` is required; the launch passes the installed file.

@@ -33,4 +33,4 @@ Ordered so you can **try it on the robot after T01**; the rest hardens it.
 
 ## T07 — Docs and full test run
 **Status**: not done
-**Description**: Update `02-doc/notes.md` ("Grammar constraint"), the `runtime` and `intent_mapper` literate docs. Run `python3 -m pytest test/`.
+**Description**: Update `process/02-doc/notes.md` ("Grammar constraint"), the `runtime` and `intent_mapper` literate docs. Run `python3 -m pytest test/`.

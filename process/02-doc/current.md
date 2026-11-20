@@ -7,19 +7,19 @@
 This package was extracted from `dome_control/voice/` to be a standalone, ROS-free voice pipeline.
 `dome_control/` consumes it via `voice_input_node.py` (the only ROS adapter).
 
-**Completed work** is in `02-doc/history.md`.
+**Completed work** is in `process/02-doc/history.md`.
 
 ## Open
 
 ### Plan
 
-- **Features F03, F05–F11 and F14** are drafted in `03-features/notdone/`, each with a task file in `04-tasks/notdone/`.
+- **Features F03, F05–F11 and F14** are drafted in `process/03-features/notdone/`, each with a task file in `process/04-tasks/notdone/`.
 - **Suggested order:** F03 → F05 → F07 → F11 → F10 → F06 → F09 → F08.
-- **Chores** are in `04-tasks/chores.md`.
+- **Chores** are in `process/04-tasks/chores.md`.
 
 ### In progress: F14 (LLM command path)
 
-- **F12 is done** (2026-11-20): 8 live exchanges, STT 0.3 s, Haiku 0.7–1.1 s, go. Findings are in `03-features/done/F12-llm-loop-spike.md`.
+- **F12 is done** (2026-11-20): 8 live exchanges, STT 0.3 s, Haiku 0.7–1.1 s, go. Findings are in `process/03-features/done/F12-llm-loop-spike.md`.
 - **F14** adds a second wake word ("hey robbie"; `hey_jarvis` for now) whose turns go to Whisper and Claude on the VM. Claude emits `/intent` through tools, or answers. "hey marvin" and the grammar stay.
 - **T01 and T02 are done** (2026-11-20): every spoken request became the right intent. The failures were downstream (dome_semantic and dome_mission not running, a turn-speed limit in dome_control, now fixed), plus a speaker clash F04 fixes. Results are in TF14 T02.
 - **F04 is done** (2026-11-20): `speech_output` publishes `/voice/speaking`, and `voice_input` and the spike's `robot_mic_pub.py` ignore the wake word while it is true. Checked on the robot.
@@ -72,14 +72,14 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 - `audio_feedback.py` — `beep()` via aplay; raises when aplay fails.
 - `voice_input_node.py`, `speech_output_node.py` — the ROS nodes.
 - `test/` — 99 passed, 3 failed (I01's `voice_input_node` tests). `spikes/llm_loop/` has 12 more.
-- `01-literate/` — literate docs.
+- `process/01-literate/` — literate docs.
 
 ## Known Issues
 
 **I02 (open):** see above.
 
 **I01: 3 test failures remain** (originally 5 of 42; found 2026-08-05): see
-`05-issues/open/I01-test-suite-regressions.md`.
+`process/05-issues/open/I01-test-suite-regressions.md`.
 - `voice_input_node`'s beep path reads `self.voice_config`, unset on the
   node under test (3 failures).
 

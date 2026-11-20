@@ -28,7 +28,7 @@
 
 ### Scope
 
-- The STT interface, adapters for the candidates, the replay option, and a results table in `02-doc/notes.md`.
+- The STT interface, adapters for the candidates, the replay option, and a results table in `process/02-doc/notes.md`.
 - Switching the robot to the winner, if it clearly beats Vosk small.
 
 ### Out of scope

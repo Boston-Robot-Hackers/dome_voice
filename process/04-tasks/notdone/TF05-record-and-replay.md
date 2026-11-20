@@ -26,7 +26,7 @@ Ordered so you can **listen to what the robot hears after T01**, before any repl
 
 ## T05 — Baseline
 **Status**: not done
-**Description**: About 50 labelled turns and 30 minutes of driving noise with today's config. Record the numbers in `02-doc/notes.md`. *Manual: real audio.*
+**Description**: About 50 labelled turns and 30 minutes of driving noise with today's config. Record the numbers in `process/02-doc/notes.md`. *Manual: real audio.*
 
 ## T06 — Git-ignore, docs, full test run
 **Status**: not done

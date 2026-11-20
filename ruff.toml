@@ -1,2 +1,2 @@
 # Literate docs hold code excerpts, not runnable code; formatting them changes their meaning.
-extend-exclude = ["01-literate"]
+extend-exclude = ["process/01-literate"]

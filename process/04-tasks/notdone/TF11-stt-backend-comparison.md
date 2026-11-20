@@ -30,7 +30,7 @@ Ordered so you can **see Vosk small vs Vosk large on your own recordings after T
 
 ## T06 — Measure and choose
 **Status**: not done
-**Description**: Run all backends on the labelled recordings. Record accuracy, empty-turn rate, and latency in `02-doc/notes.md`. Switch the robot's config to the winner if it clearly beats Vosk small, and add its install to `provision_dome`. *Manual: real audio.*
+**Description**: Run all backends on the labelled recordings. Record accuracy, empty-turn rate, and latency in `process/02-doc/notes.md`. Switch the robot's config to the winner if it clearly beats Vosk small, and add its install to `provision_dome`. *Manual: real audio.*
 
 ## T07 — Tests, docs, full test run
 **Status**: not done

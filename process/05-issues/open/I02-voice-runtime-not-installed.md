@@ -44,7 +44,7 @@
 
 - `read_mono_chunk` subtracted each chunk's own mean, so the signal stepped at every chunk boundary.
 - Median boundary jump was 1078 vs 53 mid-chunk; after the fix, 56 vs 63.
-- **Fixed** in `runtime.py`, with regression tests (see `04-tasks/chores.md`).
+- **Fixed** in `runtime.py`, with regression tests (see `process/04-tasks/chores.md`).
 
 ### 2. The codec's ADC highpass was disabled
 

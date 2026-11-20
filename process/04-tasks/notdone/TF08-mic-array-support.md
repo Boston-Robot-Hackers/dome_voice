@@ -4,7 +4,7 @@ Ordered so you can **hear the new board before any code**, then switch to it wit
 
 ## T01 — You try the board raw
 **Status**: not done
-**Description**: Plug in the XVF3800. Record `arecord -l`, channel count, sample rates, and which channel is the processed signal in `02-doc/notes.md`. Record 30 s while driving with `arecord`, the same with the Seeed HAT, and listen to both. *Manual: hardware.*
+**Description**: Plug in the XVF3800. Record `arecord -l`, channel count, sample rates, and which channel is the processed signal in `process/02-doc/notes.md`. Record 30 s while driving with `arecord`, the same with the Seeed HAT, and listen to both. *Manual: hardware.*
 
 ## T02 — Configurable capture layout
 **Status**: not done

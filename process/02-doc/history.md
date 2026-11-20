@@ -12,7 +12,7 @@ Completed work moved out of `current.md`, newest first.
 
 ### Plan and features
 
-- **Spec rewritten** (`02-doc/spec.md` v2) after a review against newer techniques.
+- **Spec rewritten** (`process/02-doc/spec.md` v2) after a review against newer techniques.
 - **Features F03–F11 drafted**, each with a task file ordered so the user can try something on the robot after the first one to three tasks.
 - **F10 widened to continuous listening:** the wake word is detected in the live stream, commands work in one breath, and there is no dead time between turns.
 - **F11 added:** compare STT backends (Vosk large, sherpa-onnx, Moonshine, Whisper) with F05's replay. The robot is a Pi 5 with 16 GB.
@@ -46,4 +46,4 @@ Completed work moved out of `current.md`, newest first.
 
 - `beep()` raises when aplay fails instead of ignoring it.
 - `speech_output`'s announcement callback catches only the errors `speak_text` can raise.
-- `ruff check` and `ruff format` pass; `ruff.toml` excludes `01-literate/`, whose snippets are excerpts.
+- `ruff check` and `ruff format` pass; `ruff.toml` excludes `process/01-literate/`, whose snippets are excerpts.

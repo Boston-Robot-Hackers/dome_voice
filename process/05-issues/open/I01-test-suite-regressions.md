@@ -1,7 +1,7 @@
 # I01 Five test-suite regressions found during 2026-08-05 checkpoint
 
 * **What the symptom is**: `python3 -m pytest test/` reports 5 failures,
-  37 passed — `02-doc/current.md` claims "42 passing tests (all green)",
+  37 passed — `process/02-doc/current.md` claims "42 passing tests (all green)",
   which is stale. Found while running the checkpoint's test step; no
   source changes were made in this repo this session (only `.claude/` and
   `CLAUDE.md`), so these are pre-existing, previously-undetected

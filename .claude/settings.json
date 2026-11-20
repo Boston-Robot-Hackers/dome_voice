@@ -16,5 +16,54 @@
       "Read(./**/*.pem)",
       "Read(./**/id_rsa*)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-secrets.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-ruff.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-context.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "autoMode": {
+    "environment": [
+      "### Project: dome_voice",
+      "**Purpose**: ROS-free voice pipeline for the DOME robot: wake word, fixed-grammar or LLM commands, speech output",
+      "**Package manager**: pip and colcon (ROS 2 kilted, ament_python)",
+      "**Run**: bl dome2 robot.launch.py --options \"d c vi vo y\" (robot); bl dome2 remote.launch.py --options \"vi vo\" (VM)",
+      "**Test**: python3 -m pytest test/",
+      "**Source control**: git@github.com:Boston-Robot-Hackers/dome_voice.git",
+      "**Protected branches**: main"
+    ],
+    "allow": [
+      "$defaults"
+    ]
   }
 }

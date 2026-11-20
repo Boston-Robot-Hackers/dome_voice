@@ -16,7 +16,7 @@ Bug fixes and refactors with no spec or behaviour change. Each bug fix gets a re
 - [x] `speech_output`: replace the per-sample `struct` gain loop with numpy. Done as part of the streaming change below.
 - [ ] `__pycache__/*.pyc` files are tracked in git, so every test run dirties the tree. `git rm -r --cached` them; `.gitignore` (or the global one) should cover `__pycache__/`.
 - [x] `speech_output`'s announcement callback caught bare `Exception`. Narrowed to the errors `speak_text` raises (RuntimeError, ValueError, OSError, CalledProcessError).
-- [x] `ruff format` rewrote Python excerpts in `01-literate/*.md` and changed one's meaning. Added `ruff.toml` excluding `01-literate/`.
+- [x] `ruff format` rewrote Python excerpts in `process/01-literate/*.md` and changed one's meaning. Added `ruff.toml` excluding `process/01-literate/`.
 - [ ] `beep()` now raises on aplay failure, and `voice_input` calls it with no handler, so a busy device (an announcement on `plughw:0,0` at the same moment) stops the voice loop. Catch `RuntimeError` at the node's beep calls (one helper for all four) and log it. Regression test.
 - [x] `speech_output` streams Piper's raw output into `aplay` instead of rendering a whole WAV first, so speech starts after the first sentence. Measured on a two-sentence reply: first audio at 1.3 s, where the WAV path took about 2.2 s. Most of what's left is Piper loading its model on each reply. Tests use real subprocesses: scaling, odd-byte carry, and failure of either process (found in the F12 spike, 2026-11-20).
 - [ ] `speech_output`: keep one Piper process running instead of starting one per announcement, saving about 1 s of model load each time. This needs a way to tell where one utterance's raw audio ends.

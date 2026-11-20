@@ -29,7 +29,7 @@ Ordered so you can **say "hey marvin explore" on the robot after T02**.
 
 ## T06 — Tune the pre-roll length with F05
 **Status**: not done
-**Description**: Record one-breath and pause turns, replay with a few `preroll_secs` values, and keep the best in `voice.yaml`. Record the numbers in `02-doc/notes.md`. *Manual: real audio.*
+**Description**: Record one-breath and pause turns, replay with a few `preroll_secs` values, and keep the best in `voice.yaml`. Record the numbers in `process/02-doc/notes.md`. *Manual: real audio.*
 
 ## T07 — Tests, docs, full test run
 **Status**: not done

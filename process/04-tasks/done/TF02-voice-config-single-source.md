@@ -60,7 +60,7 @@ Also record the old `TUNED_VOICE_PARAMETERS` values here, as the starting point 
 
 **Status**: done (2026-11-19)
 
-**Description**: Add `pydantic` to `package.xml`. Update `02-doc/notes.md`'s "Tuned parameters" section: tune results now go into the YAML. Update the literate `01-runtime.md` at checkpoint, per the process.
+**Description**: Add `pydantic` to `package.xml`. Update `process/02-doc/notes.md`'s "Tuned parameters" section: tune results now go into the YAML. Update the literate `01-runtime.md` at checkpoint, per the process.
 
 **Test**: none, because these are docs and metadata. `colcon build --packages-select dome_voice` passes.
 
