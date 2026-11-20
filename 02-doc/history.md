@@ -34,6 +34,7 @@ Completed work moved out of `current.md`, newest first.
   - Dead time between turns: `wake_cooldown_secs` 1.5 → 0.8.
   - Playback was nearly silent: PCM 100, DACs 118.
 - **Result:** the last session got 6 of 8 commands, the last 6 in a row.
+- **Mixer state saved** with `sudo alsactl store` (20:08): PGA 60, ADC HPF 0.0045xFs on both channels, PCM 100, DACs 118.
 
 ### Chores
 

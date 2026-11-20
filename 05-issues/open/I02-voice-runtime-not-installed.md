@@ -78,7 +78,7 @@
 
 - Capture: `PGA` 60, `ADC HPF Cut-off` 0.0045xFs on both channels.
 - Playback was nearly silent: raised to `PCM` 127, `HP DAC`/`Line DAC`/`HPCOM DAC` 118.
-- Persist with `sudo alsactl store`; provisioning is a chore.
+- **Saved** with `sudo alsactl store` (2026-11-19 20:08; PCM since lowered to 100). Provisioning is a chore.
 
 ## Left open
 

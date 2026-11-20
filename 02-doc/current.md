@@ -32,10 +32,10 @@ This package was extracted from `dome_control/voice/` to be a standalone, ROS-fr
 
 ### I02 (voice runtime and mic): open
 
-- **Mixer state may not be saved.** The live settings are PGA 60, ADC HPF 0.0045xFs on both channels, PCM 100, DACs 118. Run `sudo alsactl store` if that hasn't been done since. Provisioning it is a chore.
+- **Mixer state is saved** (`alsactl store`, 2026-11-19 20:08): PGA 60, ADC HPF 0.0045xFs on both channels, PCM 100, DACs 118. **Left:** add it to `provision_dome` (a chore), so a fresh install gets it.
 - **The wander's source is unknown.** Unplug the lidar or power off the motor board, and measure the muted fraction at PGA 80.
 - **Untested with motors running.** All tests so far were with the robot standing still.
-- **Close I02** once the mixer is saved and provisioned, and the wander source is found or ruled out.
+- **Close I02** once the mixer is provisioned, and the wander source is found or ruled out.
 - **Diagnostic:** `cd ~/voice_diag && python3 mic_diag.py ~/ros2_ws/src/dome_voice/config/voice.yaml`. Stop `robot.launch.py` first, because the mic can only be opened once.
 
 ### Hardware decision, parked
