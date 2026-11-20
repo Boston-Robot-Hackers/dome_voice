@@ -17,13 +17,14 @@ Both go into one conversation. Each tool call Claude makes is published on
 the robot can tell a slow VM from a missing one.
 
 `/intent` and the reply are plain `std_msgs/String`, so the VM needs only stock
-ROS 2. Work runs in the subscription callbacks, so inputs queue up in order.
-Run it from the repo root, with no `colcon build` on the VM:
+ROS 2 and this package. Work runs in the subscription callbacks, so inputs
+queue up in order. Parameters: `persona` (required, the persona file),
+`whisper_model` (default `base.en`), `model` (default Claude Haiku).
 
-    python3 -m dome_voice.llm_node [--persona FILE] [--whisper-model base.en]
+    bl dome_voice remote.launch.py
+    bl dome2 remote.launch.py --options "vi vo"       # with the map view
 """
 
-import argparse
 import json
 import time
 from datetime import datetime
@@ -39,20 +40,25 @@ from std_msgs.msg import String, UInt8MultiArray
 from dome_voice.llm_turn import MODEL, Conversation, load_persona, pcm_to_float
 from dome_voice.turn_recorder import RATE
 
-DEFAULT_PERSONA = Path(__file__).resolve().parents[1] / "config" / "llm_persona.md"
 NOT_HEARD_REPLY = "Sorry, I didn't catch that."
 API_ERROR_REPLY = "Sorry, I couldn't reach my brain just now."
 
 
 class LlmNode(Node):
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self):
         super().__init__("llm_node")
-        persona = load_persona(Path(args.persona))
-        self.get_logger().info(f"Loading faster-whisper '{args.whisper_model}'...")
-        self.whisper = WhisperModel(
-            args.whisper_model, device="cpu", compute_type="int8"
-        )
-        self.conversation = Conversation(anthropic.Anthropic(), persona, args.model)
+        persona_path = self.declare_parameter("persona", "").value
+        whisper_model = self.declare_parameter("whisper_model", "base.en").value
+        model = self.declare_parameter("model", MODEL).value
+        if not persona_path:
+            raise RuntimeError(
+                "llm_node needs the `persona` parameter (the persona file); "
+                "launch it with `bl dome_voice remote.launch.py`"
+            )
+        persona = load_persona(Path(persona_path))
+        self.get_logger().info(f"Loading faster-whisper '{whisper_model}'...")
+        self.whisper = WhisperModel(whisper_model, device="cpu", compute_type="int8")
+        self.conversation = Conversation(anthropic.Anthropic(), persona, model)
         self.reply_pub = self.create_publisher(String, "/voice/llm_reply", 10)
         self.intent_pub = self.create_publisher(String, "/intent", 10)
         self.create_subscription(
@@ -60,8 +66,7 @@ class LlmNode(Node):
         )
         self.create_subscription(String, "/voice/llm_text", self.on_text, 10)
         self.get_logger().info(
-            f"Ready: Whisper '{args.whisper_model}', Claude '{args.model}', "
-            f"persona {args.persona}"
+            f"Ready: Whisper '{whisper_model}', Claude '{model}', persona {persona_path}"
         )
 
     def transcribe(self, payload: bytes) -> str:
@@ -108,18 +113,9 @@ class LlmNode(Node):
         self.reply_pub.publish(String(data=text))
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    parser.add_argument("--persona", default=str(DEFAULT_PERSONA))
-    parser.add_argument("--whisper-model", default="base.en")
-    parser.add_argument("--model", default=MODEL)
-    return parser.parse_args()
-
-
 def main() -> None:
-    args = parse_args()
     rclpy.init()
-    node = LlmNode(args)
+    node = LlmNode()
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):

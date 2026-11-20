@@ -11,10 +11,10 @@ Run the tests with `python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/tes
 - **Tools:** one per intent in F14's list. `navigation_go` takes a `label`.
 - **One request per turn:** `Conversation.ask` returns the reply text and any intents.
 - **Tool results go into the history** at the start of the next user message, so a tool call costs no second request.
-- **The system prompt** is the persona read from `config/llm_persona.md` (a placeholder for now, set with `--persona`), then the fixed rules in code. The time starts each user message instead, so the system prompt can be cached.
+- **The system prompt** is the persona read from `config/llm_persona.md` (a placeholder for now, set by the `persona` parameter since T08), then the fixed rules in code. The time starts each user message instead, so the system prompt can be cached.
 - **Text in:** the node also subscribes to `/voice/llm_text` and passes each string to `Conversation.ask` as if it were a transcript.
 - **The node** publishes each intent on `/intent` (source `llm`), and always publishes one `/voice/llm_reply`, even an empty one.
-- **On the VM**, it runs from the repo root as `python3 -m dome_voice.llm_node`, so it needs no `colcon build` there. Importing the package pulls in `runtime.py`, which needs `numpy`, `pyyaml` and `pydantic`. openWakeWord and Vosk are imported only when used.
+- **On the VM**, it first ran from the repo root as `python3 -m dome_voice.llm_node`; T08 replaced that with a launch. Importing the package pulls in `runtime.py`, which needs `numpy`, `pyyaml` and `pydantic`. openWakeWord and Vosk are imported only when used.
 
 **Test**: unit tests with a fake client:
 - a tool call becomes the right intent dict;
@@ -109,3 +109,13 @@ Manual check: `ros2 topic pub --once /voice/llm_text std_msgs/String "data: 'tel
 - Add the VM setup (from the spike README) to `02-doc/`.
 
 **Test**: none, since this is documentation.
+
+## T08 — Launch the VM side from `remote.launch.py`
+**Status**: code done, 2 launch tests passing; the check on the VM is still to do
+**Description**: Start `llm_node` the way the rest of the stack starts, so the VM runs `bl dome2 remote.launch.py --options "vi vo"` instead of a hand-typed command.
+- **dome_voice:** a `llm_node` entry point, `launch/remote.launch.py` starting it, and `config/llm_persona.md` installed.
+- **`llm_node` takes ROS parameters** (`persona`, `whisper_model`, `model`) instead of argparse flags, so a launch can set them. `persona` is required; the launch passes the installed file.
+- **dome2:** `remote.launch.py` gets a `voice` subsystem. **`v` becomes ambiguous** between `viz` and `voice`; use `vi` and `vo`.
+- **The VM now builds dome_voice** (`colcon build --packages-select dome_voice`), since a launch finds only installed packages.
+
+**Test**: a launch test like `test_launch.py`: one node, `llm_node`, given the installed persona. Manual: start it on the VM with `bl dome2 remote.launch.py --options "vi vo"` and ask a question.

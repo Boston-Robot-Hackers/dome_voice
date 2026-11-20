@@ -9,8 +9,14 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/launch", ["launch/robot.launch.py"]),
-        ("share/" + package_name + "/config", ["config/voice.yaml"]),
+        (
+            "share/" + package_name + "/launch",
+            ["launch/robot.launch.py", "launch/remote.launch.py"],
+        ),
+        (
+            "share/" + package_name + "/config",
+            ["config/voice.yaml", "config/llm_persona.md"],
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -23,6 +29,7 @@ setup(
             "voice_smoke_test = dome_voice.runtime:main",
             "voice_input = dome_voice.voice_input_node:main",
             "speech_output = dome_voice.speech_output_node:main",
+            "llm_node = dome_voice.llm_node:main",
         ],
     },
 )

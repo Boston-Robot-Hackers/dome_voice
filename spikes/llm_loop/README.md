@@ -39,6 +39,13 @@ ros2 topic list | grep /voice/utterance
 git clone git@github.com:Boston-Robot-Hackers/dome_voice.git /home/pitosalas/ros2_ws/src/dome_voice
 ```
 
+Then build it, so a launch can find it. **Rebuild after each `git pull`**, and after editing `config/llm_persona.md`:
+
+```bash
+cd /home/pitosalas/ros2_ws && colcon build --packages-select dome_voice dome2
+```
+
+`dome2` is needed for `bl dome2 remote.launch.py`. dome_voice lists `dome_control` as a dependency for the robot's nodes; the VM doesn't need it built.
 
 **4. Python packages.** On Ubuntu 24.04, add `--break-system-packages`:
 
@@ -58,12 +65,18 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ## Each run
 
-**VM: the LLM node.** The first run downloads the Whisper model (about 150 MB):
+**VM: the LLM node**, with the map view or on its own. The first run downloads the Whisper model (about 150 MB):
 
 ```bash
-source /opt/ros/kilted/setup.bash
-cd /home/pitosalas/ros2_ws/src/dome_voice && python3 -m dome_voice.llm_node
+source /home/pitosalas/ros2_ws/install/setup.bash
+bl dome2 remote.launch.py --options "vi vo"
 ```
+
+```bash
+bl dome_voice remote.launch.py
+```
+
+`v` alone no longer works on the remote: it matches both `viz` and `voice`.
 
 Wait for `Ready: Whisper 'base.en', Claude 'claude-haiku-5-5'`.
 
@@ -111,5 +124,5 @@ python3 -m pytest /home/pitosalas/ros2_ws/src/dome_voice/test/
 ## Notes
 
 - **The robot runs the installed `dome_voice`.** After changing `/home/pitosalas/ros2_ws/src/dome_voice/dome_voice/`, run `colcon build --packages-select dome_voice` in `/home/pitosalas/ros2_ws`.
-- **Options:** `llm_node --whisper-model small.en` is slower but more accurate. `--model <id>` picks another Claude model. `--persona FILE` picks the persona (default `config/llm_persona.md`).
+- **Parameters:** `llm_node` takes `persona` (the launch passes the installed `config/llm_persona.md`), `whisper_model` (default `base.en`; `small.en` is slower but more accurate) and `model` (another Claude model).
 - **Each reply is billed** to the API key's account.
