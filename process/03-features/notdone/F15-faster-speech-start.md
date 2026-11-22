@@ -8,7 +8,7 @@
 
 **Tasks File Created:** yes
 
-**Tests Written:** no
+**Tests Written:** yes (unit tests; the robot demo is TF15.2)
 
 **Test Passing:** no
 

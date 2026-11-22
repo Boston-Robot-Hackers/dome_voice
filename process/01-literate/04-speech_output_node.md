@@ -1,6 +1,6 @@
 ---
-version: "2.3"
-generated: "2026-11-20"
+version: "3.0"
+generated: "2026-11-22"
 ---
 
 # 04 — `speech_output_node.py`: Giving the Robot a Voice
@@ -9,30 +9,45 @@ generated: "2026-11-20"
 
 `speech_output_node` subscribes to `/announcement` and speaks each message aloud. It is the only node in the stack that produces speech. Anything that wants the robot to talk publishes an announcement and leaves the rest to this node.
 
-Each announcement flows through a **pipeline of two processes**, with the node in the middle scaling the volume:
+Since F15 (2026-11-22) it is built for **a short gap between announcement and sound**. The synthesis itself lives in `dome_voice.piper_server` (chapter 07); this node decides *what* to synthesise *when*, and plays it:
 
 ```mermaid
 flowchart LR
-    A["/announcement"] --> B[Announcement.from_msg]
-    B -->|text on stdin| C["piper --output_raw"]
-    C -->|raw int16 PCM| D["scale_pcm<br/>(numpy, per chunk)"]
-    D -->|raw int16 PCM| E["aplay -t raw"]
-    E --> F[speaker]
+    A["/announcement"] --> B[split_sentences]
+    B --> C{in SpeechCache?}
+    C -- yes --> E[scale_pcm]
+    C -- no --> D["PiperServer.synthesize<br/>(one long-lived piper)"]
+    D --> E
+    E --> F["Playback:<br/>/dev/shm file → aplay"]
+    F --> G[speaker]
 ```
 
-The key property is that **audio flows as soon as Piper produces it**. The robot starts speaking after the first sentence is synthesized, not after the whole reply.
+Around each announcement it also publishes **`/voice/speaking`** (`std_msgs/Bool`), so listeners can stop listening while the robot talks.
 
-Around each announcement it also publishes **`/voice/speaking`** (`std_msgs/Bool`), so listeners can stop listening while the robot talks (next to last section).
+## Why F15 changed it
+
+Before F15, every announcement started a fresh `piper --output_raw` and streamed its output through numpy into `aplay`. TF15.0 measured that on the robot:
+
+| Part | Time |
+|---|---|
+| dome_pad press → `/announcement` | 8–12 ms |
+| Piper loading the voice model | **≈ 0.6 s, every time** |
+| Synthesising "linear speed 0.2, angular speed 0.7" | ≈ 0.9 s |
+| `aplay` opening the card (cold / warm) | 0.09 / 0.04 s |
+
+So **most of the wait was Piper starting up**. The fixes follow directly:
+
+- **Keep one Piper running** and feed it requests (chapter 07). The 0.6 s goes away after startup.
+- **Cache sentences** already spoken. A repeated status reply needs no synthesis.
+- **Speak a sentence at a time**, so a multi-sentence reply starts after its first sentence, as the old streaming path did.
 
 ## The announcement contract
 
 The message type and the `Announcement` dataclass both come from `dome_control.announcement_contract`. An announcement has `text`, `priority`, `stamp`, `source` and `dedup_key`.
 
-This node uses only `text`, plus `priority` and `source` for the log line. **Priorities and dedup keys are carried but not acted on yet.** There is no queue, no pre-emption and no dropping of repeats. A safety announcement waits behind chit-chat.
+This node uses only `text`, plus `priority` and `source` for the log line. **Priorities and dedup keys are carried but not acted on yet.** There is no queue, no pre-emption and no dropping of repeats.
 
 ## Configuration: the YAML for tuning, the environment for paths
-
-Since F13 (2026-11-20), the node's settings come from **two sources, split by kind**:
 
 | Setting | Source | Robot value |
 |---|---|---|
@@ -42,82 +57,90 @@ Since F13 (2026-11-20), the node's settings come from **two sources, split by ki
 | `DOME_PIPER_BIN` | environment | set by `provision_dome` |
 | `DOME_PIPER_MODEL_PATH` | environment (required) | set by `provision_dome` |
 
-**Tuning goes in the YAML; install paths stay in the environment.** The volume is a choice about how the robot sounds, so it belongs next to the rest of the voice config, where you can read it. The Piper paths differ per machine and are written by the installer, so a checked-in file is the wrong place for them.
+**Tuning goes in the YAML; install paths stay in the environment.** The YAML arrives as the **`config` parameter**, set by `robot.launch.py`, and `load_speech_settings` (chapter 01) validates it strictly, so a gain of 0 stops the node at startup.
 
-The YAML arrives the same way as for `voice_input`: as the **`config` parameter**, set by `robot.launch.py`. Without it the node refuses to start:
+Startup also reads the **voice's sample rate** from the `<model>.onnx.json` Piper ships beside every voice. **Raw PCM has no header**, so `aplay -t raw` must be told the rate, and the WAVs Piper writes are checked against it (chapter 07).
 
-```python
-def config_path(self) -> str:
-    self.declare_parameter("config", "")
-    path = self.get_parameter("config").get_parameter_value().string_value
-    if not path:
-        raise RuntimeError(
-            "speech_output needs the `config` parameter (the voice YAML); "
-            "launch it with `bl dome_voice robot.launch.py`"
-        )
-    return path
-```
-
-`load_speech_settings` (chapter 01) validates the file with the same strict model, so a gain of 0 or a misspelled key stops the node at startup. The old `SPEECH_GAIN`, `PIPER_LENGTH_SCALE` and `SPEECH_ALSA_DEVICE` variables are no longer read.
-
-**This replaced three layers of defaults** that disagreed: the node's own (gain 0.35), the launch file's fallbacks (0.25), and the shell. Now there is one, in `SpeechSettings`, and the YAML writes out the robot's values.
-
-Startup also reads the **voice's sample rate** from the `<model>.onnx.json` file Piper ships beside every voice:
+Startup then **starts the long-lived Piper**:
 
 ```python
-def model_sample_rate(model_path: str) -> int:
-    if not model_path:
-        raise RuntimeError("DOME_PIPER_MODEL_PATH is required for speech output")
-    config_path = Path(f"{model_path}.json")
-    return int(json.loads(config_path.read_text())["audio"]["sample_rate"])
+self.piper = PiperServer(
+    piper_command(self.piper_bin, self.piper_model_path, self.length_scale),
+    self.sample_rate,
+    SPEECH_DIR,
+)
+self.cache = SpeechCache()
 ```
 
-This is needed because **raw PCM has no header**. A WAV file says its own rate, but `aplay -t raw` must be told, and the wrong rate plays the voice too fast or too slow. The robot's `en_US-lessac-medium` voice is 22050 Hz.
-
-All of this is **validated at startup**: a missing `config`, a bad YAML value, a missing model path or a missing `.json` makes the node fail to start. That is the right place to fail, because a bad value would otherwise surface on the first announcement, possibly much later.
+The model loads while the rest of the stack is still coming up, so the first announcement doesn't pay for it.
 
 ## Speaking one message
 
-### Two commands
+### A sentence at a time, pipelined
 
-The node builds one command line for each end of the pipe:
-
-```python
-def piper_command(piper_bin, model_path, length_scale):
-    return [piper_bin, "--model", model_path, "--output_raw",
-            "--length_scale", str(length_scale), "--quiet"]
-
-def aplay_command(sample_rate, alsa_device=""):
-    cmd = ["aplay", "-q"]
-    if alsa_device:
-        cmd.extend(["-D", alsa_device])
-    cmd.extend(["-t", "raw", "-f", "S16_LE", "-r", str(sample_rate), "-c", "1"])
-    return cmd
-```
-
-- **`--output_raw`** makes Piper write 16-bit mono PCM to stdout *sentence by sentence*, instead of a finished WAV file.
-- **`aplay -t raw -f S16_LE -c 1`** is the matching consumer: little-endian 16-bit mono at the model's rate.
-
-Both are plain functions, so the tests can check them without running anything.
-
-### The streaming loop
-
-`stream_speech` connects the two with pipes and copies audio across in chunks:
+`speak_text` walks the text's sentences and **overlaps work with playback**: while sentence *n* plays, sentence *n + 1* is synthesised.
 
 ```python
-carry = b""
-while chunk := synth.stdout.read(PCM_CHUNK_BYTES):
-    chunk = carry + chunk
-    whole = len(chunk) - len(chunk) % 2
-    play.stdin.write(scale_pcm(chunk[:whole], gain))
-    carry = chunk[whole:]
+for index, sentence in enumerate(split_sentences(text)):
+    pcm = scale_pcm(self.sentence_audio(sentence), self.speech_gain)
+    if playing is not None:
+        playing.wait()
+    playing = Playback(pcm, play_cmd, self.play_path(index))
+playing.wait()
 ```
 
-**Why the node sits in the middle** instead of piping Piper straight to aplay: the volume. Piper's output peaks at full scale, which is too loud for the robot's speaker, so every chunk is scaled on its way through.
+The order inside the loop is the point:
 
-**The carry handles a subtle pipe property.** A read from a pipe returns *whatever is available*, up to the limit, and that can be an odd number of bytes. An int16 sample is 2 bytes, so a split sample would misalign every sample after it, and the audio would turn into loud noise. Keeping the stray byte for the next read keeps the stream aligned.
+1. **Synthesise first.** This happens while the previous sentence is still playing.
+2. **Then wait** for that sentence to finish.
+3. **Then start** the new one.
 
-The text itself is written to Piper's stdin up front and stdin is closed. A reply is small enough to fit in the pipe buffer, so this can't block.
+This is a two-stage *software pipeline*. Synthesis runs about 5× faster than speech on the robot, so sentence *n + 1* is normally ready before sentence *n* ends, and the listener hears no gap beyond Piper's own sentence pause and an `aplay` start (about 40 ms).
+
+```mermaid
+sequenceDiagram
+    participant N as speak_text
+    participant P as Piper
+    participant A as aplay
+    N->>P: sentence 1
+    P-->>N: audio 1
+    N->>A: play 1
+    N->>P: sentence 2
+    P-->>N: audio 2
+    A-->>N: 1 done
+    N->>A: play 2
+    A-->>N: 2 done
+```
+
+**Why split at all**, when Piper already splits internally? Because a WAV only appears when its whole text is done. Sending the whole reply would make a two-sentence joke wait for both sentences, which is slower than the old streaming path. Splitting ourselves gets back the early start.
+
+### The cache
+
+```python
+def sentence_audio(self, sentence: str) -> bytes:
+    pcm = self.cache.get(sentence)
+    if pcm is None:
+        pcm = self.piper.synthesize(sentence)
+        self.cache.put(sentence, pcm)
+    return pcm
+```
+
+The cache holds **unscaled** audio per sentence, and the gain is applied on the way out, so the cache never depends on the volume. Its key is the text alone: the voice and length scale can't change while the node runs. A changed sentence is simply a miss, never stale audio.
+
+### Playback without blocking
+
+```python
+class Playback:
+    def __init__(self, pcm, play_cmd, path):
+        self.path = path
+        path.write_bytes(pcm)
+        self.proc = subprocess.Popen([*play_cmd, str(path)], stderr=subprocess.PIPE)
+```
+
+**`aplay` plays a file, not a pipe.** Writing a 4 s sentence into `aplay`'s stdin would block once the 64 KB pipe buffer filled, which is most of the sentence, and the pipeline would stall. A file in `/dev/shm` (RAM) is written in microseconds, `aplay` reads it at its own pace, and `speak_text` is free to synthesise the next sentence.
+
+- **`wait`** reaps the player, deletes the file, and raises with `aplay`'s stderr if it failed.
+- **`stop`** kills it and deletes the file. `speak_text`'s `finally` uses it, so an error mid-reply never leaves a player or a file behind.
 
 ### Gain with numpy
 
@@ -127,26 +150,7 @@ def scale_pcm(pcm: bytes, gain: float) -> bytes:
     return np.clip(samples, -32768, 32767).astype("<i2").tobytes()
 ```
 
-- **Multiplying the samples is a linear volume change.** A gain of 0.5 is about −6 dB; 0.25 is about −12 dB.
-- **Clipping protects against gain > 1.** Without it, a loud sample would wrap around from +32767 to −32768, which sounds like a crack. Since Piper already peaks at full scale, any gain above 1.0 distorts.
-- **One vectorised call per 4 KB chunk.** The earlier per-sample `struct` loop took about 0.15 s per reply; this takes a fraction of a millisecond.
-
-### Exits and cleanup
-
-```python
-check_exit("piper", synth)
-check_exit("aplay", play)
-...
-finally:
-    for proc in (synth, play):
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
-```
-
-`check_exit` waits for each process and raises with its stderr if it exited non-zero, so a log line says *why* (no device, bad model) and not just that it failed.
-
-The `finally` covers the early-failure case. If aplay dies mid-stream, for example because the device is busy, the next write raises `BrokenPipeError`, and Piper would otherwise be left running. **Both processes are always reaped**, so a failed announcement leaves no stray processes behind.
+Multiplying samples is a linear volume change (0.5 ≈ −6 dB). **Clipping** protects against gain above 1: without it a loud sample would wrap from +32767 to −32768, which sounds like a crack.
 
 ## Failure handling, and the speaking flag
 
@@ -161,27 +165,18 @@ finally:
     self.speaking_pub.publish(Bool(data=False))
 ```
 
-**`/voice/speaking` brackets the speech.** `True` goes out before Piper starts, and `False` comes out of a `finally`, so a failed announcement can never leave listeners muted forever. Empty announcements return before this point and publish nothing.
+**`/voice/speaking` brackets the whole reply**, every sentence of it, and `False` comes out of a `finally`, so a failure can never leave listeners muted. Listeners ignore their wake word while it's true: *half-duplex*, the cheap answer to a mic without echo cancellation.
 
-The listeners (`voice_input`, and the F14 spike's mic script) ignore their wake word while the flag is true. That is *half-duplex*: the cheap software answer to a mic with no echo cancellation.
-
-**One failed announcement must not kill the node**, so these errors are logged and the node carries on.
-
-**The catch names what `speak_text` can raise:**
-- `RuntimeError` when piper or aplay exits non-zero.
-- `OSError` for a missing binary or a broken pipe.
-- `ValueError` from bad audio data.
-
-A programming error, such as a `TypeError`, still surfaces instead of being logged as a speech failure.
+**One failed announcement must not kill the node.** The catch names what `speak_text` can raise: `RuntimeError` (Piper exited, `aplay` failed, a wrong-format WAV), `OSError` (a missing binary or file), `ValueError` (bad audio data).
 
 ## Shutdown
 
-`main()` treats `KeyboardInterrupt` and `ExternalShutdownException` (the launcher's SIGTERM) as a normal stop. Then it destroys the node and calls `rclpy.try_shutdown()`, so stopping a launch prints no traceback.
+`destroy_node` closes the Piper server before the node goes, and `main()` treats `KeyboardInterrupt` and `ExternalShutdownException` as a normal stop, so stopping a launch prints no traceback and leaves no Piper running.
 
 ## Observations
 
-1. **Piper still starts per announcement.** About 1 s of the 1.3 s before the first word is Piper loading its model. A long-lived Piper process fed one line per announcement would remove that, but the node would then need a way to find where each utterance's raw audio ends, since the stream has no markers.
-2. **Speech blocks the callback.** `speak_text` runs inside the subscription callback. With the default single-threaded executor, announcements arriving during speech queue up in the 10-deep subscription buffer, and anything beyond that is dropped.
-3. **Priority is ignored.** The contract supports priorities and dedup keys, and dome_control's features F08 to F10 (priority queue, barge-in, dedup) plan to use them. Until then, the order is first-come, first-served.
-4. **Speech and beeps can still collide, but rarely.** Speech takes the card exclusively. `/voice/speaking` stops listeners from waking, and so beeping, during speech; an announcement that starts in the instant right after a wake can still meet the wake beep.
-5. **The flag uses default QoS.** A listener that starts mid-sentence misses the `True` and assumes silence until the next announcement. A *transient local* (latched) publisher would give late joiners the current state.
+1. **A dead Piper stays dead.** If the Piper process exits, every later announcement fails with "piper exited" until the node restarts. Restarting it once, on the next announcement, would make speech self-healing, but nothing has shown it's needed yet.
+2. **Speech still blocks the callback.** With the default single-threaded executor, announcements arriving during speech queue in the 10-deep subscription buffer. Priorities (dome_control F08–F10) will need this to change.
+3. **Piper takes every core while synthesising.** On 2026-11-22 the EKF missed its 30 Hz deadline around speech. Running Piper under `nice` would let the EKF win, at some cost in synthesis time.
+4. **Sentence splitting is simple.** It breaks at `.`/`!`/`?` plus whitespace, so "e.g. this" splits early. Harmless for robot speech, but a smarter splitter could keep abbreviations whole.
+5. **The flag uses default QoS.** A listener starting mid-reply misses the `True`; a *transient local* publisher would give late joiners the current state.

@@ -33,6 +33,7 @@ dome_voice/
 ├── audio_feedback.py     # confirmation beeps via aplay — no ROS
 ├── turn_recorder.py      # each turn to WAV + JSON, for listening and replay — no ROS
 ├── voice_input_node.py   # ROS node: runtime + mapper → /intent, /voice/state
+├── piper_server.py       # one long-lived Piper, sentence cache, splitting — no ROS
 └── speech_output_node.py # ROS node: /announcement → Piper → aplay
 launch/robot.launch.py    # starts both nodes
 config/voice.yaml         # the robot's voice settings (passed by the launch file)
@@ -50,7 +51,7 @@ flowchart LR
     VIN -- "/voice/state" --> ANY[observers]
     VIN --> BEEP[audio_feedback<br/>aplay]
     BM -- "/announcement" --> SON[speech_output_node]
-    SON --> PIPER[piper → WAV] --> APLAY[aplay]
+    SON --> PIPER[piper_server<br/>one long-lived piper] --> APLAY[aplay]
 ```
 
 ## One voice turn
@@ -77,9 +78,10 @@ A *turn* is one wake word plus one command:
 | 01 | `runtime.py` | the audio pipeline: config, filtering, wake, capture |
 | 02 | `intent_mapper.py` | how text becomes an intent |
 | 03 | `voice_input_node.py` | the ROS shell and the state topic |
-| 04 | `speech_output_node.py` | Piper synthesis, gain, playback |
+| 04 | `speech_output_node.py` | speaking a sentence at a time, the cache, gain, playback |
 | 05 | `launch/robot.launch.py` | how the nodes are started and configured |
 | 06 | `turn_recorder.py` | recording turns, and why they start before the wake |
+| 07 | `piper_server.py` | keeping one Piper running, its JSON protocol, the LRU cache |
 | X01 | `audio_feedback.py` | the beep synthesiser |
 | X02 | `testvoice.py` | the one-turn diagnostic |
 

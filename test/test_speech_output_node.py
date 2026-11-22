@@ -7,7 +7,6 @@
 # Open Source Under MIT license
 
 import json
-import sys
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -19,13 +18,12 @@ from dome_control.announcement_contract import (
     make_announcement_msg,
 )
 
-from dome_voice import speech_output_node
+from dome_voice.piper_server import SpeechCache
 from dome_voice.speech_output_node import (
+    Playback,
     aplay_command,
     model_sample_rate,
-    piper_command,
     scale_pcm,
-    stream_speech,
 )
 
 
@@ -93,15 +91,6 @@ def test_on_announcement_ignores_empty():
     node.speak_text.assert_not_called()
 
 
-def test_piper_command_streams_raw_audio():
-    cmd = piper_command("piper", "/tmp/model.onnx", 1.4)
-    assert cmd[:3] == ["piper", "--model", "/tmp/model.onnx"]
-    assert "--output_raw" in cmd
-    assert "--output_file" not in cmd
-    assert cmd[cmd.index("--length_scale") + 1] == "1.4"
-    assert "--quiet" in cmd
-
-
 def test_aplay_command_reads_raw_mono_at_model_rate():
     assert aplay_command(22050, "hw:1,0") == [
         "aplay", "-q", "-D", "hw:1,0",
@@ -134,69 +123,138 @@ def test_scale_pcm_scales_and_clips():
     assert loud == [20000, -20000, 32767]
 
 
-def fake_synth(n_samples: int, value: int) -> list[str]:
-    """A synthesizer stand-in: reads all of stdin, writes constant int16 PCM."""
-    script = (
-        "import sys, struct; sys.stdin.read(); "
-        f"sys.stdout.buffer.write(struct.pack('<h', {value}) * {n_samples})"
-    )
-    return [sys.executable, "-c", script]
-
-
 def recorded_samples(path) -> list[int]:
     return np.frombuffer(path.read_bytes(), dtype="<i2").tolist()
 
 
-def test_stream_speech_pipes_scaled_audio_to_player(tmp_path):
+def copying_player(out) -> list[str]:
+    """A player stand-in: copies the file it's given (appended last) to `out`."""
+    return ["sh", "-c", f'cp "$1" {out}', "sh"]
+
+
+def test_playback_plays_the_pcm_from_a_file(tmp_path):
     out = tmp_path / "played.raw"
-    stream_speech("hello", fake_synth(1000, 10000), ["sh", "-c", f"cat > {out}"], 0.5)
+    pcm = np.full(1000, 5000, dtype="<i2").tobytes()
+    Playback(pcm, copying_player(out), tmp_path / "s.raw").wait()
     assert recorded_samples(out) == [5000] * 1000
 
 
-def test_stream_speech_carries_odd_bytes_across_reads(tmp_path, monkeypatch):
-    monkeypatch.setattr(speech_output_node, "PCM_CHUNK_BYTES", 3)
-    out = tmp_path / "played.raw"
-    stream_speech("hi", fake_synth(50, 1234), ["sh", "-c", f"cat > {out}"], 1.0)
-    assert recorded_samples(out) == [1234] * 50
+def test_playback_removes_its_file(tmp_path):
+    Playback(b"\x00\x00", ["true"], tmp_path / "s.raw").wait()
+    assert not (tmp_path / "s.raw").exists()
 
 
-def test_stream_speech_raises_when_player_fails():
-    player = ["sh", "-c", "cat > /dev/null; echo no device >&2; exit 3"]
+def test_playback_raises_when_the_player_fails(tmp_path):
+    player = ["sh", "-c", "echo no device >&2; exit 3", "sh"]
+    playback = Playback(b"\x00\x00", player, tmp_path / "s.raw")
     with pytest.raises(RuntimeError, match=r"aplay failed \(3\): no device"):
-        stream_speech("hello", fake_synth(100, 1), player, 1.0)
+        playback.wait()
 
 
-def test_stream_speech_raises_when_synth_fails():
-    synth = ["sh", "-c", "cat > /dev/null; echo bad model >&2; exit 1"]
-    with pytest.raises(RuntimeError, match="piper failed"):
-        stream_speech("hello", synth, ["sh", "-c", "cat > /dev/null"], 1.0)
+def test_playback_stop_cuts_it_short(tmp_path):
+    playback = Playback(b"\x00\x00", ["sleep", "30"], tmp_path / "s.raw")
+    playback.stop()
+    assert playback.proc.poll() is not None
+    assert not (tmp_path / "s.raw").exists()
 
 
-def test_stream_speech_cleans_up_when_player_dies_early():
-    with pytest.raises((OSError, RuntimeError)):
-        stream_speech("hello", fake_synth(200_000, 1), ["false"], 1.0)
+class RecordingPlayback:
+    """Stands in for Playback and records the order of plays and waits."""
+
+    def __init__(self, events: list, fail_wait: bool = False):
+        self.events = events
+        self.fail_wait = fail_wait
+
+    def __call__(self, pcm, play_cmd, path):
+        self.events.append(("play", pcm))
+        playback = MagicMock()
+        playback.wait.side_effect = self.waiter(pcm)
+        playback.stop.side_effect = lambda: self.events.append(("stop", pcm))
+        return playback
+
+    def waiter(self, pcm):
+        def wait():
+            self.events.append(("wait", pcm))
+            if self.fail_wait:
+                raise RuntimeError("aplay failed (1): busy")
+
+        return wait
 
 
-@patch("dome_voice.speech_output_node.stream_speech")
-def test_speak_text_streams_with_node_settings(mock_stream):
+def speaking_node(events: list):
+    """A SpeechOutputNode with a recording fake Piper and a real cache, ROS skipped."""
     from dome_voice.speech_output_node import SpeechOutputNode
 
     node = SpeechOutputNode.__new__(SpeechOutputNode)
-    node.piper_bin = "piper"
-    node.piper_model_path = "/tmp/model.onnx"
     node.alsa_device = "hw:1,0"
-    node.speech_gain = 0.35
-    node.length_scale = 1.25
+    node.speech_gain = 1.0
     node.sample_rate = 22050
+    node.piper = MagicMock()
 
-    SpeechOutputNode.speak_text(node, "hello")
+    def synthesize(sentence):
+        events.append(("synth", sentence))
+        return sentence.encode()[:2].ljust(2, b"\x00")
 
-    mock_stream.assert_called_once_with(
-        "hello",
-        piper_command("piper", "/tmp/model.onnx", 1.25),
-        aplay_command(22050, "hw:1,0"),
-        0.35,
-    )
+    node.piper.synthesize.side_effect = synthesize
+    node.cache = SpeechCache()
+    return SpeechOutputNode, node
+
+
+def test_speak_text_synthesises_the_next_sentence_while_one_plays():
+    events = []
+    SpeechOutputNode, node = speaking_node(events)
+    with patch("dome_voice.speech_output_node.Playback", RecordingPlayback(events)):
+        SpeechOutputNode.speak_text(node, "Why did it cross? To charge.")
+    assert events == [
+        ("synth", "Why did it cross?"),
+        ("play", b"Wh"),
+        ("synth", "To charge."),
+        ("wait", b"Wh"),
+        ("play", b"To"),
+        ("wait", b"To"),
+    ]
+
+
+def test_repeated_sentences_are_played_from_the_cache():
+    events = []
+    SpeechOutputNode, node = speaking_node(events)
+    with patch("dome_voice.speech_output_node.Playback", RecordingPlayback(events)):
+        SpeechOutputNode.speak_text(node, "linear speed 0.2, angular speed 0.7")
+        SpeechOutputNode.speak_text(node, "linear speed 0.2, angular speed 0.7")
+    synths = [event for event in events if event[0] == "synth"]
+    assert synths == [("synth", "linear speed 0.2, angular speed 0.7")]
+
+
+def test_speak_text_scales_by_the_gain():
+    events = []
+    SpeechOutputNode, node = speaking_node(events)
+    node.speech_gain = 0.5
+    node.piper.synthesize.side_effect = None
+    node.piper.synthesize.return_value = np.array([10000], dtype="<i2").tobytes()
+    with patch("dome_voice.speech_output_node.Playback", RecordingPlayback(events)):
+        SpeechOutputNode.speak_text(node, "hello")
+    assert events[0] == ("play", np.array([5000], dtype="<i2").tobytes())
+
+
+def test_failed_playback_is_stopped_and_raised():
+    events = []
+    SpeechOutputNode, node = speaking_node(events)
+    with (
+        patch(
+            "dome_voice.speech_output_node.Playback",
+            RecordingPlayback(events, fail_wait=True),
+        ),
+        pytest.raises(RuntimeError, match="aplay failed"),
+    ):
+        SpeechOutputNode.speak_text(node, "One. Two.")
+    assert events[-1][0] == "stop"
+
+
+def test_destroy_node_stops_piper():
+    SpeechOutputNode, node = speaking_node([])
+    with patch("rclpy.node.Node.destroy_node"):
+        SpeechOutputNode.destroy_node(node)
+    node.piper.close.assert_called_once()
 
 
 def init_node(monkeypatch, tmp_path, yaml_text: str, config_param: str | None = None):
@@ -216,8 +274,12 @@ def init_node(monkeypatch, tmp_path, yaml_text: str, config_param: str | None = 
     node.get_parameter = MagicMock()
     param = node.get_parameter.return_value.get_parameter_value.return_value
     param.string_value = str(config) if config_param is None else config_param
-    with patch("rclpy.node.Node.__init__", return_value=None):
+    with (
+        patch("rclpy.node.Node.__init__", return_value=None),
+        patch("dome_voice.speech_output_node.PiperServer") as piper_server,
+    ):
         SpeechOutputNode.__init__(node)
+    node.piper_server_class = piper_server
     return node
 
 
@@ -230,6 +292,15 @@ def test_node_reads_speech_settings_from_the_yaml(monkeypatch, tmp_path):
         "hw:2,0",
     )
     assert node.sample_rate == 22050
+
+
+def test_node_starts_one_piper_at_startup(monkeypatch, tmp_path):
+    node = init_node(monkeypatch, tmp_path, "speech:\n  length_scale: 1.2\n")
+    node.piper_server_class.assert_called_once()
+    command, sample_rate, _out_dir = node.piper_server_class.call_args.args
+    assert "--json-input" in command
+    assert command[command.index("--length_scale") + 1] == "1.2"
+    assert sample_rate == 22050
 
 
 def test_node_ignores_the_old_environment_variables(monkeypatch, tmp_path):
