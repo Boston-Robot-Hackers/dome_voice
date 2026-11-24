@@ -10,6 +10,7 @@
   <buildtool_depend>ament_python</buildtool_depend>
 
   <exec_depend>dome_control</exec_depend>
+  <exec_depend>dome_voice_msgs</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-pydantic</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
