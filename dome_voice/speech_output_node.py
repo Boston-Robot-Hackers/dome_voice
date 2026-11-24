@@ -5,6 +5,20 @@
 # Created: 2026-11-19
 # Updated: 2026-11-20
 # Open Source Under MIT license
+"""Speaks each `/announcement` through Piper and ALSA, with `/voice/speaking`
+true for the duration.
+
+F15 made speech start sooner. An announcement used to start a new Piper and
+load the voice model each time, about 0.6 s of the ~1.6 s before sound.
+Now:
+- **One Piper process runs for the life of the node**
+  (`dome_voice.piper_server`).
+- **Text is spoken a sentence at a time, pipelined:** sentence n+1 is
+  synthesised while sentence n plays. Each sentence is written to a file
+  in `/dev/shm` and `aplay` plays the file, so playing doesn't block
+  synthesis.
+- **Recent sentences are cached**, so a repeated one plays at once.
+"""
 
 import json
 import os
@@ -18,26 +32,18 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Bool
 
+from dome_voice.piper_server import (
+    SPEECH_DIR,
+    PiperServer,
+    SpeechCache,
+    piper_command,
+    split_sentences,
+)
 from dome_voice.runtime import load_speech_settings
-
-PCM_CHUNK_BYTES = 4096
-
-
-def piper_command(piper_bin: str, model_path: str, length_scale: float) -> list[str]:
-    """Piper writing raw int16 mono PCM to stdout as each sentence is ready."""
-    return [
-        piper_bin,
-        "--model",
-        model_path,
-        "--output_raw",
-        "--length_scale",
-        str(length_scale),
-        "--quiet",
-    ]
 
 
 def aplay_command(sample_rate: int, alsa_device: str = "") -> list[str]:
-    """aplay reading raw int16 mono PCM at `sample_rate` from stdin."""
+    """aplay playing raw int16 mono PCM at `sample_rate`; the file path goes last."""
     cmd = ["aplay", "-q"]
     if alsa_device:
         cmd.extend(["-D", alsa_device])
@@ -59,48 +65,28 @@ def scale_pcm(pcm: bytes, gain: float) -> bytes:
     return np.clip(samples, -32768, 32767).astype("<i2").tobytes()
 
 
-def stream_speech(
-    text: str, synth_cmd: list[str], play_cmd: list[str], gain: float
-) -> None:
-    """Pipe `text` through the synthesizer into the player, scaling on the way.
+class Playback:
+    """One sentence playing in the background: `pcm` written to `path`, then
+    the player started on it. `wait` blocks until it ends and raises if the
+    player failed; `stop` cuts it short. Both remove the file."""
 
-    Playback starts as soon as the synthesizer emits its first audio, instead
-    of after the whole reply is rendered. Chunks are cut to whole samples, so
-    an odd byte is carried to the next read. Raises if either process fails.
-    """
-    synth = subprocess.Popen(
-        synth_cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    play = subprocess.Popen(play_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        synth.stdin.write(text.encode("utf-8"))
-        synth.stdin.close()
-        carry = b""
-        while chunk := synth.stdout.read(PCM_CHUNK_BYTES):
-            chunk = carry + chunk
-            whole = len(chunk) - len(chunk) % 2
-            play.stdin.write(scale_pcm(chunk[:whole], gain))
-            carry = chunk[whole:]
-        play.stdin.close()
-        check_exit("piper", synth)
-        check_exit("aplay", play)
-    finally:
-        for proc in (synth, play):
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
+    def __init__(self, pcm: bytes, play_cmd: list[str], path: Path):
+        self.path = path
+        path.write_bytes(pcm)
+        self.proc = subprocess.Popen([*play_cmd, str(path)], stderr=subprocess.PIPE)
 
+    def wait(self) -> None:
+        code = self.proc.wait()
+        err = self.proc.stderr.read().decode(errors="replace").strip()
+        self.path.unlink(missing_ok=True)
+        if code != 0:
+            raise RuntimeError(f"aplay failed ({code}): {err}")
 
-def check_exit(name: str, proc: subprocess.Popen) -> None:
-    """Wait for `proc`; raise with its stderr if it exited non-zero."""
-    err = proc.stderr.read()
-    if proc.wait() != 0:
-        raise RuntimeError(
-            f"{name} failed ({proc.returncode}): {err.decode(errors='replace').strip()}"
-        )
+    def stop(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait()
+        self.path.unlink(missing_ok=True)
 
 
 class SpeechOutputNode(Node):
@@ -118,6 +104,12 @@ class SpeechOutputNode(Node):
         self.piper_bin = os.environ.get("DOME_PIPER_BIN", "piper")
         self.piper_model_path = os.environ.get("DOME_PIPER_MODEL_PATH", "")
         self.sample_rate = model_sample_rate(self.piper_model_path)
+        self.piper = PiperServer(
+            piper_command(self.piper_bin, self.piper_model_path, self.length_scale),
+            self.sample_rate,
+            SPEECH_DIR,
+        )
+        self.cache = SpeechCache()
         self.get_logger().info(
             f"Speech from {config}: gain {self.speech_gain}, length scale "
             f"{self.length_scale}, device {self.alsa_device or 'ALSA default'}"
@@ -159,12 +151,34 @@ class SpeechOutputNode(Node):
             self.speaking_pub.publish(Bool(data=False))
 
     def speak_text(self, text: str) -> None:
-        stream_speech(
-            text,
-            piper_command(self.piper_bin, self.piper_model_path, self.length_scale),
-            aplay_command(self.sample_rate, self.alsa_device),
-            self.speech_gain,
-        )
+        """Speak `text` a sentence at a time, synthesising the next while one plays."""
+        play_cmd = aplay_command(self.sample_rate, self.alsa_device)
+        playing = None
+        try:
+            for index, sentence in enumerate(split_sentences(text)):
+                pcm = scale_pcm(self.sentence_audio(sentence), self.speech_gain)
+                if playing is not None:
+                    playing.wait()
+                playing = Playback(pcm, play_cmd, self.play_path(index))
+            playing.wait()
+            playing = None
+        finally:
+            if playing is not None:
+                playing.stop()
+
+    def sentence_audio(self, sentence: str) -> bytes:
+        pcm = self.cache.get(sentence)
+        if pcm is None:
+            pcm = self.piper.synthesize(sentence)
+            self.cache.put(sentence, pcm)
+        return pcm
+
+    def play_path(self, index: int) -> Path:
+        return SPEECH_DIR / f"dome_play_{os.getpid()}_{index}.raw"
+
+    def destroy_node(self) -> None:
+        self.piper.close()
+        super().destroy_node()
 
 
 def main():
